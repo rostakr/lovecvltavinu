@@ -1,0 +1,35 @@
+{
+  "name": "Lovec vltavínů: Na zelené vlně v5.4.2",
+  "short_name": "Lovec vltavínů",
+  "description": "Herní pozvánka na akci Na zelené vlně 2026. Nasbírej vltavíny v jižních Čechách a doraz 19. září do KD Slávie v Českých Budějovicích.",
+  "lang": "cs",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#3A006E",
+  "theme_color": "#3A006E",
+  "categories": ["games", "entertainment"],
+  "prefer_related_applications": false,
+  "shortcuts": [
+    {"name": "Nová výprava", "short_name": "Vyrazit", "url": "./?new=1", "icons": [{"src": "icon-192.png", "sizes": "192x192"}]},
+    {"name": "Jak se hraje", "short_name": "Návod", "url": "./?help=1", "icons": [{"src": "icon-192.png", "sizes": "192x192"}]}
+  ],
+  "icons": [
+    {
+      "src": "icon-180.png",
+      "sizes": "180x180",
+      "type": "image/png"
+    },
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
