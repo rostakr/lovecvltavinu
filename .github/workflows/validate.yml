@@ -1,0 +1,208 @@
+name: Validate v5.4 continuation
+
+on:
+  pull_request:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: validate-v2-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  static:
+    name: Static validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run validate
+
+  pr-publish:
+    name: PR publish validation
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build:publish
+      - run: npm run validate:publish
+
+  publish:
+    name: Clean Pages publish
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:publish
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: publish-test-results
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7
+
+  browser:
+    name: Playwright - ${{ matrix.project }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - project: desktop-chromium
+            browser: chromium
+          - project: iphone-portrait
+            browser: chromium
+          - project: iphone-landscape
+            browser: chromium
+          - project: desktop-webkit
+            browser: webkit
+          - project: iphone-portrait-webkit
+            browser: webkit
+          - project: iphone-landscape-webkit
+            browser: webkit
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps ${{ matrix.browser }}
+      - run: npm run test:smoke -- --project=${{ matrix.project }}
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: playwright-${{ matrix.project }}
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7
+
+  visual:
+    name: Visual regression - ${{ matrix.project }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        project:
+          - visual-desktop
+          - visual-iphone-portrait
+          - visual-iphone-landscape
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:visual -- --project=${{ matrix.project }}
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: visual-${{ matrix.project }}
+          path: test-results/visual/
+          retention-days: 7
+
+  motion:
+    name: Motion evidence - tractor
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npx playwright test tests/motion-evidence.spec.mjs --project=motion-desktop
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: motion-tractor
+          path: test-results/
+          retention-days: 7
+
+  excavator-motion:
+    name: Motion evidence - excavator
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npx playwright test tests/excavator-motion-evidence.spec.mjs --project=motion-excavator
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: motion-excavator
+          path: test-results/
+          retention-days: 7
+
+  car-motion:
+    name: Motion evidence - car
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npx playwright test tests/car-motion-evidence.spec.mjs --project=motion-car
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: motion-car
+          path: test-results/
+          retention-days: 7
+
+  offline:
+    name: Playwright - offline-chromium
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:offline
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: playwright-offline-chromium
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7

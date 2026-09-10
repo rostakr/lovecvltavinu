@@ -1,0 +1,263 @@
+<!doctype html>
+<html lang="cs">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#3A006E">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Lovec vltavínů">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="format-detection" content="telephone=no">
+  <meta name="description" content="Herní pozvánka na akci Na zelené vlně 2026. Nasbírej vltavíny v jižních Čechách a doraz 19. září do KD Slávie v Českých Budějovicích.">
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="apple-touch-icon" href="./icon-180.png">
+  <link rel="stylesheet" href="./style.css">
+  <style>
+    /* Critical title-logo sizing also bypasses stale PWA stylesheet caches on the first refreshed navigation. */
+    #titleScreen .nzv-brand-lockup{width:clamp(128px,11vw,164px)}
+    @media(max-width:760px){#titleScreen .nzv-brand-lockup{width:112px}}
+    @media(max-height:490px) and (orientation:landscape){#titleScreen .nzv-brand-lockup{width:82px}}
+  </style>
+  <title>Lovec vltavínů: Na zelené vlně</title>
+</head>
+<body>
+<main id="app">
+  <canvas id="game" tabindex="0" aria-label="Herní plocha"></canvas>
+
+  <section id="hud" class="hud hidden">
+    <div class="hud-topbar">
+      <div class="mission-panel">
+        <span id="missionNumber" class="mission-index">1</span>
+        <div class="mission-copy"><small id="placeLabel">CHLUM</small><strong id="objectiveLabel">Najdi 6 vltavínů</strong></div>
+      </div>
+      <div class="system-panel">
+        <div class="bag-pill" aria-label="Počet kamenů"><span>◆</span><b id="bagValue">0</b></div>
+        <button id="soundButton" class="icon-button" type="button" aria-label="Zvuk">♫</button>
+        <button id="pauseButton" class="icon-button" type="button" aria-label="Pauza">Ⅱ</button>
+      </div>
+    </div>
+    <div id="heatPill" class="danger-meter" aria-label="Pozornost hlídky">
+      <div class="danger-copy"><span>POZORNOST</span><strong id="dangerMeterText">KLID</strong></div>
+      <i><em id="heatFill"></em></i>
+    </div>
+    <div id="bossHud" class="boss-hud hidden">
+      <div><small>HROZBA</small><strong id="bossName">KAREL</strong></div>
+      <i><em id="bossFill"></em></i>
+      <span id="bossPhase">STOPUJ HO</span>
+    </div>
+    <div id="dangerBanner" class="danger-banner hidden"><span>⚠</span><strong id="dangerText">VE SVĚTLE</strong></div>
+    <div id="combo" class="combo hidden">KOMBO ×2</div>
+    <div id="hint" class="hint hidden">Rozhlédni se po okolí</div>
+    <div id="toast" class="toast" role="status" aria-live="polite" aria-atomic="true"></div>
+    <div class="campaign-hud-badge" aria-label="Cíl výpravy: Na zelené vlně, 19. září 2026, KD Slávie České Budějovice">
+      <span>CÍL VÝPRAVY</span><strong>NA ZELENÉ VLNĚ</strong><small>19. 9. 2026 · KD SLÁVIE</small>
+    </div>
+  </section>
+
+  <div id="theftAlert" class="theft-alert hidden" role="alert" aria-live="assertive" aria-atomic="true">
+    <small>POZOR!</small>
+    <strong>KAREL TI VZAL JEŽKA</strong>
+    <span>Karel ti sebral besednického ježka přímo z profilu. Dožeň ho!</span>
+  </div>
+
+  <div id="bossIntro" class="boss-intro hidden" role="status" aria-live="polite" aria-atomic="true">
+    <div class="boss-intro-line"></div>
+    <small id="bossIntroKicker">HROZBA V LOKALITĚ</small>
+    <strong id="bossIntroName">KAREL</strong>
+    <span id="bossIntroText">Nenech ho zmizet se vzácným nálezem.</span>
+  </div>
+
+  <section id="controls" class="controls hidden" aria-label="Dotykové ovládání">
+    <div id="moveZone" class="move-zone" role="application" aria-label="Virtuální joystick pro pohyb"><div id="stick" class="stick"></div></div>
+    <button id="actionButton" class="action-button" type="button" aria-label="Spustit radar">
+      <span id="actionIcon">◉</span><small id="actionText">RADAR</small>
+    </button>
+  </section>
+
+  <section id="titleScreen" class="screen visible">
+    <div class="title-art" aria-hidden="true">
+      <div class="moon"></div><div class="ridge r1"></div><div class="ridge r2"></div>
+      <div class="field-lines"></div><div class="title-gem">◆</div>
+    </div>
+    <div class="title-copy">
+      <div class="menu-brand-row">
+        <a class="nzv-brand-lockup" href="https://www.nazelenevlne.cz" target="_blank" rel="noopener noreferrer" aria-label="Na zelené vlně – informace o akci">
+          <img src="./assets/ui/nzv-logo-purple.png" alt="Na zelené vlně" width="560" height="545" decoding="sync" fetchpriority="high">
+        </a>
+        <p class="eyebrow campaign-eyebrow">HRA K AKCI NA ZELENÉ VLNĚ 2026</p>
+      </div>
+      <h1>Lovec<br><span>vltavínů</span></h1>
+      <p class="subtitle">Nasbírej nejkrásnější vltavíny a doraz s nimi na akci <strong>Na zelené vlně</strong> v KD Slávii.</p>
+      <div id="campaignEventCard" class="campaign-event-card" aria-label="Na zelené vlně, 19. září 2026, České Budějovice, KD Slávie">
+        <div class="event-date"><small>KDY</small><strong>19. ZÁŘÍ 2026</strong></div>
+        <div class="event-place"><small>KDE</small><strong>KD SLÁVIE</strong><span>České Budějovice</span></div>
+      </div>
+      <div class="campaign-storyline" aria-label="Pět lokalit, jedna sbírka, finále na akci">
+        <span>5 LOKALIT</span><i>•</i><span>1 SBÍRKA</span><i>•</i><strong>FINÁLE NA AKCI</strong>
+      </div>
+      <button id="playButton" class="play-button" type="button"><span>VYRAZIT ZA VLTAVÍNY</span><small>cesta končí v KD Slávii</small></button>
+      <button id="continueButton" class="continue-button hidden" type="button">POKRAČOVAT VE VÝPRAVĚ</button>
+      <div class="title-tools menu-tools">
+        <button id="howButton" class="menu-link-button" type="button">Jak hrát</button>
+        <button id="recordsButton" class="menu-link-button" type="button">Rekordy</button>
+        <a class="menu-link-button campaign-link" href="https://www.nazelenevlne.cz" target="_blank" rel="noopener noreferrer">O akci ↗</a>
+      </div>
+      <p class="version">v5.4.2 · Lovec vltavínů × Na zelené vlně 2026</p>
+    </div>
+  </section>
+
+  <section id="briefScreen" class="screen" aria-labelledby="briefTitle" aria-describedby="briefText" tabindex="-1">
+    <div class="brief-card">
+      <p id="briefKicker" class="eyebrow">LOKALITA 1 / 5</p>
+      <h2 id="briefTitle" tabindex="-1" data-autofocus>Chlum po bouřce</h2>
+      <p id="briefText"></p>
+      <div class="brief-goal"><span>ÚKOL</span><strong id="briefGoal"></strong></div>
+      <div class="brief-why"><span>PROČ</span><p id="briefWhy"></p></div>
+      <div class="campaign-route">
+        <div><span>SBÍRKA</span><i>→</i><span>5 LOKALIT</span><i>→</i><strong>NA ZELENÉ VLNĚ</strong></div>
+        <small>19. 9. 2026 · KD Slávie · České Budějovice</small>
+      </div>
+      <button id="briefButton" class="primary-button" type="button">JDU NA TO</button>
+    </div>
+  </section>
+
+  <section id="digScreen" class="screen transparent" role="dialog" aria-modal="true" aria-labelledby="digTitle" aria-describedby="digInfo" tabindex="-1">
+    <div class="dig-card">
+      <button id="digPauseButton" class="icon-button dig-pause" type="button" aria-label="Pozastavit kopání">Ⅱ</button>
+      <p class="eyebrow">KOPÁNÍ</p>
+      <h2 id="digTitle">Drž rytmus lopaty</h2>
+      <p id="digInfo">Tref tři přesné údery. Klepni nebo stiskni mezerník v zeleném poli.</p>
+      <div class="dig-illustration" aria-hidden="true">
+        <span class="dig-ground dig-ground-back"></span>
+        <span class="dig-ground dig-ground-front"></span>
+        <span class="dig-shovel-art"></span>
+        <span class="dig-stone-art">◆</span>
+      </div>
+      <div class="dig-meter-wrap">
+        <span class="dig-meter-label">RYTMUS ÚDERU</span>
+      <div id="digMeter" class="dig-meter" role="meter" aria-label="Rytmus úderu" aria-valuemin="0" aria-valuemax="100" aria-valuenow="50"><div id="sweetZone"></div><div id="digMarker"></div></div>
+      </div>
+      <div class="dig-timer" aria-label="Zbývající čas"><span id="digTimerFill"></span></div>
+      <div id="digHits" class="dig-hits">◇ ◇ ◇</div>
+      <div id="digFeedback" class="dig-feedback" role="status" aria-live="polite" aria-atomic="true">Čekám na první úder</div>
+      <button id="digButton" class="primary-button dig-action" type="button">ÚDER!</button>
+    </div>
+  </section>
+
+  <section id="identifyScreen" class="screen transparent" role="dialog" aria-modal="true" aria-labelledby="sampleTitle" aria-describedby="sampleDescription" tabindex="-1">
+    <div class="identify-card">
+      <p class="eyebrow">RYCHLÉ URČENÍ</p>
+      <div id="sampleGem" class="sample-gem">◆</div>
+      <h2 id="sampleTitle">Zelený vzorek</h2>
+      <p id="sampleDescription"></p>
+      <div class="identify-buttons">
+        <button id="realButton" class="primary-button" type="button">PRAVÝ VLTAVÍN</button>
+        <button id="glassButton" class="secondary-button" type="button">FALEŠNÉ SKLO</button>
+      </div>
+    </div>
+  </section>
+
+  <section id="dialogScreen" class="screen transparent" role="dialog" aria-modal="true" aria-labelledby="dialogName" aria-describedby="dialogText" tabindex="-1">
+    <div class="dialog-card">
+      <div id="dialogAvatar" class="avatar">V</div>
+      <div><p id="dialogName" class="eyebrow">VÁCLAV</p><p id="dialogText"></p></div>
+      <button id="dialogButton" class="primary-button" type="button">DOBŘE</button>
+    </div>
+  </section>
+
+  <section id="fraudScreen" class="screen transparent" role="dialog" aria-modal="true" aria-labelledby="fraudTitle" aria-describedby="fraudDescription" tabindex="-1">
+    <div class="fraud-card">
+      <p class="eyebrow">KONTROLA INDICIÍ</p>
+      <h2 id="fraudTitle">Sedí Frantův vzorek?</h2>
+      <p id="fraudDescription">Porovnej Frantův vzorek se třemi indiciemi. Jedna nesrovnalost sama o sobě nestačí — rozhoduje jejich souvislost.</p>
+      <div class="evidence-grid">
+        <article><span>01 · POVRCH</span><strong>Opakující se reliéf</strong><p>Na dvou místech se opakuje téměř stejný vzor povrchu.</p></article>
+        <article><span>02 · FOTOGRAFIE</span><strong>Jiný tvar</strong><p>Tvar kamene na fotografii neodpovídá předloženému kusu.</p></article>
+        <article><span>03 · ZÁZNAM</span><strong>Nesedí čas nálezu</strong><p>Uvedený čas nálezu neodpovídá záznamu z lokality.</p></article>
+      </div>
+      <p id="fraudFeedback" class="fraud-feedback" role="status" aria-live="polite" aria-atomic="true">Posuď všechny tři indicie dohromady.</p>
+      <div class="fraud-actions">
+        <button id="fraudButton" class="primary-button" type="button">NAHLÁSIT NESROVNALOSTI</button>
+        <button id="fraudWrongButton" class="secondary-button" type="button">VZOREK JE V POŘÁDKU</button>
+      </div>
+    </div>
+  </section>
+
+  <section id="perkScreen" class="screen" aria-labelledby="perkTitle" tabindex="-1">
+    <div class="perk-card">
+      <p class="eyebrow">VÝPRAVA SÍLÍ</p>
+      <h2 id="perkTitle" tabindex="-1" data-autofocus>Vyber jednu výhodu</h2>
+      <div id="perkList" class="perk-list"></div>
+    </div>
+  </section>
+
+  <section id="expertiseScreen" class="screen" aria-labelledby="expertiseTitle" aria-describedby="expertiseText" tabindex="-1">
+    <div class="perk-card">
+      <p class="eyebrow">ODBORNÉ POSOUZENÍ</p>
+      <h2 id="expertiseTitle" tabindex="-1" data-autofocus>Expertiza</h2>
+      <p id="expertiseText">Vyber konkrétní kusy k odbornému posouzení. Certifikace a doložený původ jsou dvě oddělené vlastnosti.</p>
+      <div id="expertiseList" class="jury-list expertise-list" aria-label="Kameny k certifikaci"></div>
+      <div class="jury-footer expertise-footer"><span id="expertiseCount">0 / 0</span><button id="expertiseButton" class="primary-button" type="button" disabled>PŘEVZÍT CERTIFIKÁTY</button></div>
+    </div>
+  </section>
+
+  <section id="juryScreen" class="screen" aria-labelledby="juryTitle" aria-describedby="juryDescription" tabindex="-1">
+    <div class="jury-card">
+      <div class="exhibition-hall" aria-hidden="true">
+        <span>VÝSTAVNÍ SÁL KD SLÁVIE</span>
+        <div class="hall-lights"><i></i><i></i><i></i></div>
+        <div class="hall-cases"><i></i><i></i><i></i></div>
+      </div>
+      <div class="event-arrival-banner"><span>DORAZIL JSI NA AKCI</span><strong>NA ZELENÉ VLNĚ</strong><small>19. 9. 2026 · KD Slávie · České Budějovice</small></div>
+      <p class="eyebrow">FINÁLE V KD SLÁVII</p>
+      <h2 id="juryTitle" tabindex="-1" data-autofocus>Vyber tři kameny do vitríny</h2>
+      <p id="juryDescription">Porota hodnotí stav, doložený původ a pestrost lokalit. Samotná hmotnost nerozhoduje.</p>
+      <div id="juryList" class="jury-list"></div>
+      <div class="jury-footer"><span id="juryCount">0 / 3</span><button id="juryButton" class="primary-button" type="button" disabled>POSTAVIT VITRÍNU</button></div>
+    </div>
+  </section>
+
+  <section id="resultScreen" class="screen" aria-labelledby="resultTitle" aria-describedby="resultText" tabindex="-1">
+    <div class="result-card">
+      <p id="resultKicker" class="eyebrow">VÝSLEDEK POROTY</p>
+      <h2 id="resultTitle" tabindex="-1" data-autofocus>Výstavní uznání</h2>
+      <div class="score-ring"><strong id="resultScore">0</strong><span>BODŮ</span></div>
+      <p id="resultText"></p>
+      <div id="resultStats" class="result-stats"></div>
+      <div class="result-event-invite">
+        <img src="./assets/ui/nzv-logo-purple.png" alt="" aria-hidden="true">
+        <div><strong>Teď doraz i ve skutečnosti.</strong><span>19. 9. 2026 · KD Slávie · České Budějovice</span></div>
+      </div>
+      <a class="primary-button result-event-link" href="https://www.nazelenevlne.cz" target="_blank" rel="noopener noreferrer">NAZELENEVLNE.CZ ↗</a>
+      <button id="againButton" class="secondary-button" type="button">NOVÁ VÝPRAVA</button>
+      <button id="resultRecordsButton" class="text-button" type="button">Zobrazit rekordy</button>
+    </div>
+  </section>
+
+  <section id="pauseScreen" class="screen transparent" role="dialog" aria-modal="true" aria-labelledby="pauseTitle" tabindex="-1">
+    <div class="small-card"><p class="eyebrow">PAUZA</p><h2 id="pauseTitle">Výprava čeká</h2><button id="resumeButton" class="primary-button" type="button">POKRAČOVAT</button><button id="menuButton" class="secondary-button" type="button">ULOŽIT A ODEJÍT</button></div>
+  </section>
+
+  <section id="howScreen" class="screen" role="dialog" aria-modal="true" aria-labelledby="howTitle" tabindex="-1">
+    <div class="how-card">
+      <p class="eyebrow">POHYB + JEDNO AKČNÍ TLAČÍTKO</p><h2 id="howTitle">Jak se hraje</h2>
+      <div class="how-grid">
+        <div><b>1</b><strong>Pohyb</strong><p>Mobil: pohybuj se levým joystickem. Na klávesnici použij WASD nebo šipky.</p></div>
+        <div><b>2</b><strong>Radar a akce</strong><p>Radar odhaluje skryté nálezy. U cíle se akce sama změní na sběr, kopání, rozhovor nebo zahrabání. Na klávesnici použij mezerník.</p></div>
+        <div><b>3</b><strong>Pozornost</strong><p>Hluk a pobyt ve světle zvyšují pozornost. Při dopadení můžeš přijít o jeden z méně cenných kamenů.</p></div>
+        <div><b>4</b><strong>Kombo</strong><p>Rychlé správné nálezy násobí skóre. Vzácný kus kombo prodlouží.</p></div>
+      </div>
+      <button id="closeHowButton" class="primary-button" type="button">ROZUMÍM</button>
+    </div>
+  </section>
+
+  <section id="recordsScreen" class="screen" role="dialog" aria-modal="true" aria-labelledby="recordsTitle" tabindex="-1">
+    <div class="records-card"><p class="eyebrow">NEJLEPŠÍ VÝPRAVY</p><h2 id="recordsTitle">Rekordy</h2><ol id="recordsList"></ol><button id="closeRecordsButton" class="primary-button" type="button">ZAVŘÍT</button></div>
+  </section>
+
+  <noscript><div class="noscript">Hra potřebuje zapnutý JavaScript.</div></noscript>
+</main>
+<script src="./game.js"></script>
+</body>
+</html>

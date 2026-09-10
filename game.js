@@ -1,0 +1,3303 @@
+(() => {
+  "use strict";
+
+  const $ = id => document.getElementById(id);
+  const canvas = $("game");
+  const screenCtx = canvas.getContext("2d", { alpha: false, desynchronized: true });
+  let ctx = screenCtx;
+  const app = $("app");
+  const hud = $("hud");
+  const controls = $("controls");
+
+  const screens = {
+    title: $("titleScreen"), brief: $("briefScreen"), dig: $("digScreen"), identify: $("identifyScreen"),
+    dialog: $("dialogScreen"), fraud: $("fraudScreen"), perk: $("perkScreen"), expertise: $("expertiseScreen"), jury: $("juryScreen"), result: $("resultScreen"),
+    pause: $("pauseScreen"), how: $("howScreen"), records: $("recordsScreen")
+  };
+
+  const ui = {
+    missionNumber: $("missionNumber"), place: $("placeLabel"), objective: $("objectiveLabel"), bag: $("bagValue"),
+    heat: $("heatFill"), heatPill: $("heatPill"), dangerBanner: $("dangerBanner"), dangerText: $("dangerText"), dangerMeterText: $("dangerMeterText"), bossHud: $("bossHud"), bossName: $("bossName"), bossFill: $("bossFill"), bossPhase: $("bossPhase"), bossIntro: $("bossIntro"), theftAlert: $("theftAlert"), bossIntroName: $("bossIntroName"), bossIntroText: $("bossIntroText"), combo: $("combo"), hint: $("hint"), toast: $("toast"),
+    actionIcon: $("actionIcon"), actionText: $("actionText")
+  };
+
+  const APP_VERSION = "5.4.2";
+  const SAVE_SCHEMA = 2;
+  const JURY_RECOGNITION_SCORE = 15000;
+  const JURY_MAIN_PRIZE_SCORE = 21500;
+  const SAVE_KEY = "lovecVltavinuRebornSaveV5_4_2";
+  const RECORD_KEY = "lovecVltavinuRebornRecordsV5_2";
+  const LEGACY_SAVE_KEYS = ["lovecVltavinuRebornSaveV5_2","lovecVltavinuRebornSaveV5_1","lovecVltavinuRebornSaveV5_0","lovecVltavinuRebornSaveV4_9","lovecVltavinuRebornSaveV4_8","lovecVltavinuRebornSaveV4_7","lovecVltavinuRebornSaveV4_6","lovecVltavinuRebornSaveV4_5"];
+  const isTouch = navigator.maxTouchPoints > 0 || "ontouchstart" in window || matchMedia("(pointer: coarse)").matches;
+  const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const storage = {
+    get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+    set(k, v) { try { localStorage.setItem(k, v); return true; } catch { return false; } },
+    remove(k) { try { localStorage.removeItem(k); } catch {} }
+  };
+
+  function migrateLegacySave(){
+    if(storage.get(SAVE_KEY))return;
+    for(const key of LEGACY_SAVE_KEYS){const value=storage.get(key);if(value){storage.set(SAVE_KEY,value);break;}}
+  }
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  const lerp = (a, b, t) => a + (b - a) * t;
+  const approach = (value, target, amount) => value < target ? Math.min(value + amount, target) : Math.max(value - amount, target);
+  const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+  const rand = (a, b) => a + Math.random() * (b - a);
+  const pick = arr => arr[Math.floor(Math.random() * arr.length)];
+  const escapeHtml = value => String(value).replace(/[&<>"']/g, ch => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"})[ch]);
+  const finiteNumber = (value, fallback, min = -Infinity, max = Infinity) => {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? clamp(parsed, min, max) : fallback;
+  };
+
+  const LEVELS = [
+    {
+      id: "chlum", name: "Chlum", title: "Chlum po bouřce", theme: "field",
+      text: "Po bouřce vyrážíš na pole za prvními kusy do sbírky. Na podobná pole jezdí i Franta; na rozdíl od tebe hledá hlavně kusy na prodej a peníze chce utratit za automaty. Radar ti pomůže odhalit kusy, které v hlíně snadno přehlédneš.",
+      why: "Ty vltavíny nehledáš kvůli penězům. Chceš sestavit co nejlepší sbírku a vybrat z ní nejzajímavější kusy pro výstavu na akci Na zelené vlně v KD Slávii.",
+      goal: "Radarem najdi a sesbírej 6 vltavínů z povrchu pole.", music: "field"
+    },
+    {
+      id: "locenice", name: "Ločenice", title: "Písčitá hrana", theme: "meadow",
+      text: "V borovém lese se mezi nálezy pletou i kusy falešného skla. Rozliš pravé vltavíny od napodobenin podle povrchu, tvaru a pravidelnosti skla.",
+      why: "Potřebuješ rozšířit sbírku o ověřené kusy. Ločenice prověří oko sběratele, ne jen rychlost pohybu.",
+      goal: "Správně urči 5 vzorků a najdi 3 pravé kusy.", music: "meadow"
+    },
+    {
+      id: "nesmen", name: "Nesměň", title: "Lesní profily", theme: "forest",
+      text: "Lesník dovoluje kopat jen v malých vyznačených profilech. Nejdřív se s ním domluv. Každý otevřený profil po prohlédnutí zase pečlivě zahrab.",
+      why: "Dobrá sbírka není jen o nálezech. Záleží i na tom, co po sobě v terénu necháš.",
+      goal: "Promluv s lesníkem. Potom vykopej a zahrab 3 profily.", music: "forest"
+    },
+    {
+      id: "besednice", name: "Besednice", title: "Ježková noc", theme: "night",
+      text: "Po setmění vyrážíš do Besednice. U starého profilu jsou čerstvé stopy a někdo tu očividně hledal před tebou. Karel se svými lidmi je nejspíš nablízku.",
+      why: "Besednické ježky patří mezi nejvýraznější vltavíny, které můžeš do výstavní sbírky získat.",
+      goal: "Najdi 3 stopy a vypátrej ježkový profil.", music: "night"
+    },
+    {
+      id: "malse", name: "Malše", title: "Na zelené vlně", theme: "city",
+      text: "S certifikáty ke konkrétním vybraným kusům přicházíš podél Malše ke KD Slávii. Franta se pohybuje poblíž a před registrací je znát napětí. Dostaň sbírku i dokumentaci bezpečně ke vstupu.",
+      why: "Celá výprava mířila sem. Certifikované kusy musíš zaregistrovat a dostat až do výstavní vitríny.",
+      goal: "Dones certifikáty k registraci sbírky.", music: "city"
+    }
+  ];
+
+  const PERKS = [
+    { id: "boots", icon: "↟", name: "Lehké boty", text: "+12 % rychlost pohybu", max: 3 },
+    { id: "scanner", icon: "◉", name: "Citlivější radar", text: "větší dosah radaru a kratší čekání", max: 3 },
+    { id: "shovel", icon: "⛏", name: "Přesná lopata", text: "širší zelené pole při kopání", max: 3 },
+    { id: "quiet", icon: "◌", name: "Tichý postup", text: "méně pozornosti za chyby", max: 3 },
+    { id: "case", icon: "▣", name: "Pevné pouzdro", text: "při dopadení neztratíš nejlepší kus", max: 2 },
+    { id: "eye", icon: "◉", name: "Zkušené oko", text: "vyšší kvalita správně určených kusů", max: 3 }
+  ];
+
+  const SAMPLES = [
+    { real: true, title: "Olivová kapka", text: "Olivově zelený nepravidelný kus s jamkami, kanálky a několika drobnými bublinkami." },
+    { real: false, title: "Jasně zelený střep", text: "Jasně zelený kus s velmi hladkým povrchem, pravidelnými hranami a téměř stejnou tloušťkou." },
+    { real: true, title: "Hnědozelená kapka", text: "Hnědozelený kus s nepravidelnými kanálky, drobnými krátery a místy ostrými výstupky." },
+    { real: false, title: "Lesklý zelený kus", text: "Povrch je velmi hladký, hrany zaoblené a reliéf se na několika místech nápadně opakuje." },
+    { real: true, title: "Drobný celotvar", text: "Nepravidelný kus s různě hlubokou skulptací bez zjevně se opakujícího vzoru." },
+    { real: false, title: "Plochý zelený střep", text: "Má ploché stěny, téměř stejnou tloušťku a poměrně pravidelné hrany." }
+  ];
+
+  class AudioEngine {
+    constructor() {
+      this.ctx = null;
+      this.master = null;
+      this.sfxGain = null;
+      this.enabled = true;
+      this.started = false;
+      this.theme = "menu";
+      this.music = new Audio();
+      this.music.loop = true;
+      this.music.preload = "auto";
+      this.music.playsInline = true;
+      this.music.volume = .26;
+      this.targetMusicVolume = .26;
+      this.fadeTimer = 0;
+      this.musicToken = 0;
+      this.lifecyclePaused = false;
+      this.activeSources = new Set();
+      this.scoreSources = new Set();
+      this.scoreGain = null;
+      this.scoreTimer = 0;
+      this.scoreBeat = 0;
+      this.scoreNextTime = 0;
+      this.scoreThemes = {
+        menu: { root:48, chords:[0,5,9,7], melody:[0,4,7,9,7,4,2,0] },
+        field: { root:48, chords:[0,7,9,5], melody:[0,2,4,7,9,12,9,7] },
+        meadow: { root:50, chords:[2,9,11,6], melody:[2,4,6,9,11,14,11,9] },
+        forest: { root:45, chords:[9,4,0,7], melody:[9,11,12,16,14,12,11,9] },
+        night: { root:52, chords:[4,11,7,2], melody:[4,7,11,14,11,9,7,4] },
+        city: { root:55, chords:[7,2,9,0], melody:[7,9,11,14,16,14,11,9] }
+      };
+      this.musicTracks = {
+        menu: "./assets/audio/ambient/ambient-chlum.mp3",
+        field: "./assets/audio/ambient/ambient-chlum.mp3",
+        meadow: "./assets/audio/ambient/ambient-locenice.mp3",
+        forest: "./assets/audio/ambient/ambient-nesmen.mp3",
+        night: "./assets/audio/ambient/ambient-besednice.mp3",
+        city: "./assets/audio/ambient/ambient-slavia.mp3"
+      };
+      this.effectVolume = .34;
+      this.effectTracks = {
+        scan: "./assets/audio/effects/finding-chime.mp3",
+        dig: "./assets/audio/effects/dig-hit.mp3",
+        impactHard: "./assets/audio/effects/dig-impact-hard.mp3",
+        impactStone: "./assets/audio/effects/dig-impact-stone.mp3",
+        impactWet: "./assets/audio/effects/dig-impact-wet.mp3",
+        perfect: "./assets/audio/effects/dig-perfect.mp3",
+        good: "./assets/audio/effects/finding-b.mp3",
+        rare: "./assets/audio/effects/finding-c.mp3",
+        bad: "./assets/audio/effects/dig-miss.mp3",
+        catch: "./assets/audio/effects/danger-caught.mp3",
+        paper: "./assets/audio/effects/finding-a.mp3",
+        win: "./assets/audio/effects/ui-result.mp3",
+        click: "./assets/audio/effects/ui-click.mp3",
+        alert: "./assets/audio/effects/danger-pulse.mp3",
+        heartbeat: "./assets/audio/effects/danger-pulse.mp3"
+      };
+      this.dangerTracks = {
+        field: "./assets/audio/effects/danger-chlum.mp3",
+        meadow: "./assets/audio/effects/danger-nesmen.mp3",
+        forest: "./assets/audio/effects/danger-nesmen.mp3",
+        night: "./assets/audio/effects/danger-besednice.mp3",
+        city: "./assets/audio/effects/danger-slavia.mp3"
+      };
+      this.effects = Object.fromEntries(Object.entries(this.effectTracks).map(([name, src]) => {
+        const clip = new Audio(src);
+        clip.preload = "auto";
+        clip.playsInline = true;
+        clip.volume = this.effectVolume;
+        return [name, clip];
+      }));
+    }
+    start() {
+      if (!this.ctx) {
+        const AC = window.AudioContext || window.webkitAudioContext;
+        if (AC) {
+          this.ctx = new AC();
+          this.master = this.ctx.createGain();
+          this.sfxGain = this.ctx.createGain();
+          this.scoreGain = this.ctx.createGain();
+          this.master.gain.value = this.enabled ? .42 : 0;
+          this.sfxGain.gain.value = .6;
+          this.scoreGain.gain.value = .12;
+          this.sfxGain.connect(this.master);
+          this.scoreGain.connect(this.master);
+          this.master.connect(this.ctx.destination);
+        }
+      }
+      this.started = true;
+      if (!this.enabled) return;
+      this.lifecyclePaused = false;
+      if (this.ctx?.state === "suspended") this.ctx.resume().catch(() => {});
+      this.playMusic();
+    }
+    setEnabled(value,{resume=true}={}) {
+      this.enabled = Boolean(value);
+      if (this.master && this.ctx) this.master.gain.setTargetAtTime(this.enabled ? .42 : 0, this.ctx.currentTime, .03);
+      if (!this.enabled) {
+        this.pauseAll();
+      } else if (resume && this.started) {
+        this.resumeAll();
+      }
+      return this.enabled;
+    }
+    setTheme(theme) {
+      const changed = this.theme !== theme;
+      this.theme = theme;
+      if (changed && this.started && this.enabled && !this.lifecyclePaused) this.playMusic(true);
+    }
+    fadeMusic(target,duration=420,done=null,token=this.musicToken){
+      clearInterval(this.fadeTimer);
+      const start=this.music.volume;const startAt=performance.now();
+      this.fadeTimer=setInterval(()=>{
+        if(token!==this.musicToken){clearInterval(this.fadeTimer);this.fadeTimer=0;return;}
+        const p=Math.min(1,(performance.now()-startAt)/duration);
+        this.music.volume=start+(target-start)*p;
+        if(p>=1){clearInterval(this.fadeTimer);this.fadeTimer=0;done?.();}
+      },24);
+    }
+    playMusic(restart = false) {
+      if(!this.enabled||this.lifecyclePaused)return;
+      this.startScore(restart);
+      const token=++this.musicToken;
+      const src = this.musicTracks[this.theme] || this.musicTracks.field;
+      let absolute=src;try{absolute=new URL(src,location.href).href;}catch{}
+      const change=this.music.src!==absolute;
+      const switchTrack=()=>{
+        if(token!==this.musicToken||!this.enabled||this.lifecyclePaused)return;
+        if(change)this.music.src=src;
+        if(restart||change){try{this.music.currentTime=0;}catch{}}
+        this.music.volume=0;
+        this.music.play().then(()=>this.fadeMusic(this.targetMusicVolume,650,null,token)).catch(()=>{});
+      };
+      if(change&&this.music.src&&this.music.volume>.01)this.fadeMusic(0,180,switchTrack,token);else switchTrack();
+    }
+    pauseMusic(){this.musicToken+=1;clearInterval(this.fadeTimer);this.fadeTimer=0;this.music.pause();}
+    noteFrequency(note){return 440*Math.pow(2,(note-69)/12);}
+    scoreVoice(frequency,start,duration,volume,type="sine"){
+      if(!this.enabled||!this.ctx||!this.scoreGain||this.lifecyclePaused)return;
+      const osc=this.ctx.createOscillator(),gain=this.ctx.createGain();
+      const attack=Math.min(.14,duration*.2),release=Math.min(.36,duration*.38);
+      osc.type=type;osc.frequency.setValueAtTime(frequency,start);
+      gain.gain.setValueAtTime(.0001,start);
+      gain.gain.linearRampToValueAtTime(volume,start+attack);
+      gain.gain.setValueAtTime(volume,start+Math.max(attack,duration-release));
+      gain.gain.exponentialRampToValueAtTime(.0001,start+duration);
+      osc.connect(gain);gain.connect(this.scoreGain);
+      this.scoreSources.add(osc);
+      osc.addEventListener("ended",()=>this.scoreSources.delete(osc),{once:true});
+      osc.start(start);osc.stop(start+duration+.03);
+    }
+    scheduleScore(){
+      if(!this.enabled||!this.ctx||!this.scoreGain||this.lifecyclePaused)return;
+      const config=this.scoreThemes[this.theme]||this.scoreThemes.field;
+      const beatLength=.75,horizon=this.ctx.currentTime+.9;
+      while(this.scoreNextTime<horizon){
+        const beat=this.scoreBeat++,chordIndex=Math.floor(beat/4)%config.chords.length;
+        const root=config.root+config.chords[chordIndex],start=this.scoreNextTime;
+        if(beat%4===0){
+          [[0,.032],[7,.022],[12,.014]].forEach(([offset,volume])=>this.scoreVoice(this.noteFrequency(root+offset),start,beatLength*3.92,volume,"sine"));
+        }
+        this.scoreVoice(this.noteFrequency(root-24),start,beatLength*.55,.022,"sine");
+        const octave=Math.floor(beat/config.melody.length)%2?12:0;
+        const note=config.root+12+config.melody[beat%config.melody.length]+octave;
+        this.scoreVoice(this.noteFrequency(note),start,beatLength*.72,.026,"triangle");
+        this.scoreNextTime+=beatLength;
+      }
+    }
+    startScore(restart=false){
+      if(!this.enabled||!this.ctx||!this.scoreGain||this.lifecyclePaused)return;
+      if(restart)this.stopScore();
+      if(this.scoreTimer)return;
+      this.scoreBeat=0;this.scoreNextTime=this.ctx.currentTime+.05;
+      this.scheduleScore();
+      this.scoreTimer=setInterval(()=>this.scheduleScore(),240);
+    }
+    stopScore(){
+      clearInterval(this.scoreTimer);this.scoreTimer=0;this.scoreBeat=0;this.scoreNextTime=0;
+      for(const source of this.scoreSources){try{source.stop();}catch{}}
+      this.scoreSources.clear();
+    }
+    stopEffects(){
+      for (const clip of Object.values(this.effects)) { clip.pause(); try { clip.currentTime = 0; } catch {} }
+      for (const source of this.activeSources) { try { source.stop(); } catch {} }
+      this.activeSources.clear();
+    }
+    pauseAll(){
+      this.lifecyclePaused=true;
+      this.pauseMusic();
+      this.stopScore();
+      this.stopEffects();
+      if(this.ctx?.state==="running")this.ctx.suspend().catch(()=>{});
+    }
+    resumeAll(){
+      if(!this.enabled||!this.started)return;
+      this.lifecyclePaused=false;
+      if(this.ctx?.state==="suspended")this.ctx.resume().catch(()=>{});
+      this.playMusic(false);
+    }
+    resumeMusic(){this.resumeAll();}
+    toggle() { return this.setEnabled(!this.enabled); }
+    snapshot(){return {enabled:this.enabled,started:this.started,lifecyclePaused:this.lifecyclePaused,contextState:this.ctx?.state||"none",activeSources:this.activeSources.size,scoreSources:this.scoreSources.size,scoreRunning:Boolean(this.scoreTimer),theme:this.theme};}
+    tone(freq, dur=.1, type="triangle", vol=.16, when=0, slide=0) {
+      if (!this.enabled || !this.ctx || !this.sfxGain) return;
+      const t = this.ctx.currentTime + when;
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+      osc.type = type;
+      osc.frequency.setValueAtTime(freq, t);
+      if (slide) osc.frequency.exponentialRampToValueAtTime(Math.max(30,freq+slide), t+dur);
+      gain.gain.setValueAtTime(.0001,t);
+      gain.gain.linearRampToValueAtTime(vol,t+.008);
+      gain.gain.exponentialRampToValueAtTime(.0001,t+dur);
+      osc.connect(gain); gain.connect(this.sfxGain);
+      this.activeSources.add(osc);osc.addEventListener("ended",()=>this.activeSources.delete(osc),{once:true});
+      osc.start(t); osc.stop(t+dur+.03);
+    }
+    noise(dur=.08, vol=.08, cutoff=1200) {
+      if (!this.enabled || !this.ctx || !this.sfxGain) return;
+      const n=Math.floor(this.ctx.sampleRate*dur), b=this.ctx.createBuffer(1,n,this.ctx.sampleRate), d=b.getChannelData(0);
+      for(let i=0;i<n;i++) d[i]=(Math.random()*2-1)*(1-i/n);
+      const src=this.ctx.createBufferSource(), filter=this.ctx.createBiquadFilter(), g=this.ctx.createGain();
+      src.buffer=b; filter.type="lowpass"; filter.frequency.value=cutoff; g.gain.value=vol;
+      src.connect(filter); filter.connect(g); g.connect(this.sfxGain);
+      this.activeSources.add(src);src.addEventListener("ended",()=>this.activeSources.delete(src),{once:true});src.start();
+    }
+    sfx(name) {
+      const source = name === "boss" ? this.dangerTracks[this.theme] : this.effectTracks[name];
+      const clip = name === "boss" ? this.effects.boss : this.effects[name];
+      if (source && this.enabled) {
+        const playable = clip || (() => {
+          const created = new Audio(source);
+          created.preload = "auto";
+          created.playsInline = true;
+          created.volume = this.effectVolume;
+          this.effects[name] = created;
+          return created;
+        })();
+        if (playable.src !== new URL(source, location.href).href) playable.src = source;
+        playable.volume = this.effectVolume;
+        try { playable.currentTime = 0; } catch {}
+        const attempt = playable.play();
+        if (attempt?.catch) attempt.catch(error => { if(error.name!=="AbortError") this.fallbackSfx(name); });
+        return;
+      }
+      this.fallbackSfx(name);
+    }
+    fallbackSfx(name) {
+      const f = {
+        scan:()=>{this.tone(260,.18,"sine",.08,0,420);this.tone(520,.22,"sine",.05,.08,260);},
+        dig:()=>{this.noise(.11,.13,800);this.tone(82,.12,"triangle",.06);},
+        good:()=>{this.tone(620,.12,"triangle",.11);this.tone(930,.15,"sine",.08,.07);},
+        rare:()=>[523,659,784,1047].forEach((x,i)=>this.tone(x,.25,"triangle",.08,i*.06)),
+        bad:()=>{this.tone(180,.22,"square",.07,0,-70);this.noise(.09,.08,600);},
+        catch:()=>{this.tone(95,.28,"sawtooth",.1);this.noise(.16,.13,900);},
+        paper:()=>{this.tone(420,.08,"square",.06);this.tone(620,.1,"triangle",.06,.06);},
+        win:()=>[392,494,587,784].forEach((x,i)=>this.tone(x,.36,"triangle",.1,i*.1)),
+        click:()=>this.tone(360,.05,"square",.04),
+        alert:()=>{this.tone(740,.08,"square",.055);this.tone(520,.1,"square",.045,.1);},
+        heartbeat:()=>{this.tone(66,.12,"sine",.09);this.tone(58,.11,"sine",.065,.16);},
+        boss:()=>{this.tone(98,.42,"sawtooth",.06,0,-22);this.tone(147,.36,"triangle",.055,.13);this.noise(.25,.04,520);},
+        step:()=>this.noise(.025,.025,500)
+      };
+      (f[name] || f[{perfect:"good",impactWet:"dig",impactHard:"dig",impactStone:"dig"}[name]])?.();
+    }
+    update() {}
+  }
+  const audio = new AudioEngine();
+
+  function freshState() {
+    return {
+      version:APP_VERSION, saveSchema:SAVE_SCHEMA, levelIndex:0, score:0, stones:[], heat:0, combo:1, comboTimer:0, caught:0,
+      pendingTransition:null, pendingPerks:[], pendingCertification:[], expertiseCompleted:false,
+      perks:{boots:0,scanner:0,shovel:0,quiet:0,case:0,eye:0}, stats:{digs:0,correct:0,misses:0,rare:0,filled:0,fraud:0,dossier:0}, sound:true
+    };
+  }
+
+  function normalizeStone(stone, index, legacySchema=false) {
+    if (!stone || typeof stone !== "object") return null;
+    const rarity = ["common", "good", "rare", "hedgehog"].includes(stone.rarity) ? stone.rarity : "common";
+    return {
+      id: typeof stone.id === "string" && stone.id ? stone.id : `restored-${index}`,
+      locality: typeof stone.locality === "string" ? stone.locality.slice(0, 80) : "Neznámá lokalita",
+      rarity,
+      weight: finiteNumber(stone.weight, .5, .01, 1000),
+      quality: Math.round(finiteNumber(stone.quality, 60, 0, 100)),
+      size: typeof stone.size === "string" ? stone.size.slice(0, 24) : undefined,
+      qualityLabel: typeof stone.qualityLabel === "string" ? stone.qualityLabel.slice(0, 24) : undefined,
+      documented: typeof stone.documented === "boolean" ? stone.documented : legacySchema,
+      certified: stone.certified === true,
+      name: typeof stone.name === "string" ? stone.name.slice(0, 80) : "Vltavín",
+      value: Math.round(finiteNumber(stone.value, 0, 0, 100000000))
+    };
+  }
+
+  function rankStonesForExpertise(stones=state.stones){
+    return [...stones].sort((a,b)=>b.quality-a.quality||Number(b.documented)-Number(a.documented)||b.value-a.value||String(a.id).localeCompare(String(b.id)));
+  }
+  function certifyLegacyStones(stones){
+    const selected=new Set(rankStonesForExpertise(stones).slice(0,Math.min(5,stones.length)).map(stone=>stone.id));
+    stones.forEach(stone=>stone.certified=selected.has(stone.id));
+    return selected.size;
+  }
+  function certifiedStoneIds(stones=state.stones){
+    return stones.filter(stone=>stone.certified).map(stone=>stone.id);
+  }
+
+  function normalizeState(data) {
+    if (!data || typeof data !== "object" || !Array.isArray(data.stones)) return null;
+    const clean = freshState();
+    const sourceSchema=Math.round(finiteNumber(data.saveSchema,0,0,SAVE_SCHEMA));
+    const legacySchema=sourceSchema<SAVE_SCHEMA;
+    clean.saveSchema=SAVE_SCHEMA;
+    clean.levelIndex = Math.round(finiteNumber(data.levelIndex, 0, 0, LEVELS.length - 1));
+    clean.score = Math.round(finiteNumber(data.score, 0, 0, 1000000000));
+    const usedStoneIds=new Set();
+    clean.stones = data.stones.map((stone,index)=>{
+      const normalized=normalizeStone(stone,index,legacySchema);
+      if(!normalized)return null;
+      const baseId=normalized.id;
+      let uniqueId=baseId,suffix=2;
+      while(usedStoneIds.has(uniqueId))uniqueId=`${baseId}-${suffix++}`;
+      normalized.id=uniqueId;usedStoneIds.add(uniqueId);
+      return normalized;
+    }).filter(Boolean).slice(0, 250);
+    clean.heat = finiteNumber(data.heat, 0, 0, 100);
+    clean.combo = Math.round(finiteNumber(data.combo, 1, 1, 6));
+    clean.comboTimer = finiteNumber(data.comboTimer, 0, 0, 60);
+    clean.caught = Math.round(finiteNumber(data.caught, 0, 0, 100000));
+    clean.pendingTransition = data.pendingTransition==="perk"||data.pendingTransition==="expertise"||data.pendingTransition==="jury" ? data.pendingTransition : null;
+    clean.expertiseCompleted = data.expertiseCompleted === true || clean.stones.some(stone=>stone.certified);
+    const stoneIds=new Set(clean.stones.map(stone=>stone.id));
+    clean.pendingCertification=clean.pendingTransition==="expertise"&&Array.isArray(data.pendingCertification)
+      ? [...new Set(data.pendingCertification.filter(id=>stoneIds.has(id)))].slice(0,5)
+      : [];
+    for (const [key, maximum] of Object.entries({ boots:3, scanner:3, shovel:3, quiet:3, case:2, eye:3 })) {
+      clean.perks[key] = Math.round(finiteNumber(data.perks?.[key], 0, 0, maximum));
+    }
+    const availablePerks=new Set(PERKS.filter(perk=>(clean.perks[perk.id]||0)<perk.max).map(perk=>perk.id));
+    clean.pendingPerks=clean.pendingTransition==="perk"&&Array.isArray(data.pendingPerks)
+      ? [...new Set(data.pendingPerks.filter(id=>availablePerks.has(id)))].slice(0,3)
+      : [];
+    for (const key of Object.keys(clean.stats)) {
+      clean.stats[key] = Math.round(finiteNumber(data.stats?.[key], 0, 0, 1000000));
+    }
+    clean.sound = data.sound !== false;
+    return clean;
+  }
+
+  let state = freshState();
+  let mode = "menu";
+  let viewport = {w:innerWidth,h:innerHeight,dpr:1};
+  let world = null;
+  // Static non-city terrain is rasterized once per level and reused by every frame.
+  // City water remains dynamic, so Malše continues to render live.
+  let terrainCache = {key:"", canvas:null, scale:1, generated:0};
+  // Reuse render queue entries between frames to avoid short-lived allocations in the hot path.
+  const renderQueue = [];
+  const renderPool = [];
+  const renderStats = {candidates:0, rendered:0, culled:0};
+  let player = {x:0,y:0,r:17,angle:0,facing:1,pose:"front",vx:0,vy:0,speedRatio:0,step:0,footstepCycle:-1,animTime:0,moving:false,invuln:0};
+  let camera = {x:0,y:0};
+  let input = {x:0,y:0,pressed:false};
+  let resetControls = () => { input.x=0;input.y=0;input.pressed=false; };
+  let resetDigPointer = () => {};
+  let nearest = null;
+  let last = performance.now();
+  let debugRenderTime = null;
+  const renderNow = () => debugRenderTime ?? performance.now();
+  let scanCooldown = 0;
+  let scanPulse = 0;
+  let toastTimer = 0;
+  let currentDig = null;
+  let currentSample = null;
+  let digKind = "dig";
+  let digHolding = false;
+  let digMarker = 0;
+  let digDir = 1;
+  let digHits = 0;
+  let digSpeed = 1.25;
+  let digTimeLeft = 7;
+  let digZoneCenter = .5;
+  let digInputLockUntil = 0;
+  let digFinishDelay = 0;
+  let pausedMode = "playing";
+  let hudNextUpdate = 0;
+  let jurySelection = new Set();
+  let expertiseSelection = new Set();
+  let dialogueCallback = null;
+  let shake = 0;
+  let flash = 0;
+  let flashColor = "255,255,255";
+  let dangerActive = false;
+  let dangerSource = "";
+  let dangerRate = 0;
+  let dangerExposure = 0;
+  let dangerCatchAfter = Infinity;
+  let dangerWarned = false;
+  let dangerBeatTimer = 0;
+  let bossIntroTimer = 0;
+  let theftAlertUntil = 0;
+  let theftAlertShown = false;
+  let restoredWorld = false;
+  let activeScreen=null;
+  const focusOrigins=new WeakMap();
+  const screenParents=new WeakMap();
+  const modalScreens=new Set(Object.values(screens).filter(screen=>screen.matches('[role="dialog"][aria-modal="true"]')));
+  const FOCUSABLE='button:not([disabled]),[href],input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])';
+
+  function save() {
+    const payload={version:APP_VERSION,state,world:world?JSON.parse(JSON.stringify(world)):null,player:{x:player.x,y:player.y,angle:player.angle,facing:player.facing,pose:player.pose}};
+    storage.set(SAVE_KEY, JSON.stringify(payload)); refreshContinue();
+  }
+  function validWorldSnapshot(candidate,levelId){
+    if(!candidate||candidate.id!==levelId||!candidate.runtime||typeof candidate.runtime!=="object"||Array.isArray(candidate.runtime))return false;
+    if(!Number.isFinite(candidate.w)||candidate.w<=0||!Number.isFinite(candidate.h)||candidate.h<=0)return false;
+    return ["items","props","obstacles","hotspots","patrols","hazards","particles","radarPings"].every(key=>Array.isArray(candidate[key]));
+  }
+  function load() {
+    try {
+      const data=JSON.parse(storage.get(SAVE_KEY)||"null");
+      const envelope=data?.state&&typeof data.state==="object"?data:null;
+      const rawState=envelope?data.state:data;
+      const sourceSchema=Math.round(finiteNumber(rawState?.saveSchema,0,0,SAVE_SCHEMA));
+      const normalized=normalizeState(rawState);
+      if(!normalized) return false;
+      const hasPlayableMalseWorld=validWorldSnapshot(envelope?.world,"malse");
+      const rawValidStones=Array.isArray(rawState?.stones)?rawState.stones.filter(stone=>stone&&typeof stone==="object").slice(0,250):[];
+      const repairedStoneIds=rawValidStones.length!==normalized.stones.length||rawValidStones.some((stone,index)=>typeof stone.id!=="string"||!stone.id||normalized.stones[index]?.id!==stone.id);
+      let migrated=sourceSchema<SAVE_SCHEMA||repairedStoneIds;
+
+      if(sourceSchema<SAVE_SCHEMA&&normalized.levelIndex===3&&normalized.pendingTransition==="perk"){
+        normalized.pendingTransition="expertise";
+        normalized.pendingPerks=[];
+        migrated=true;
+      }
+      if(sourceSchema<SAVE_SCHEMA&&normalized.levelIndex===4&&normalized.pendingTransition==="jury"){
+        normalized.expertiseCompleted=true;
+        if(normalized.stones.length&&!normalized.stones.some(stone=>stone.certified))certifyLegacyStones(normalized.stones);
+        migrated=true;
+      }
+      if(normalized.levelIndex===4&&!normalized.expertiseCompleted&&normalized.pendingTransition!=="jury"){
+        if(hasPlayableMalseWorld){
+          normalized.expertiseCompleted=true;
+          certifyLegacyStones(normalized.stones);
+        }else{
+          normalized.pendingTransition="expertise";
+          normalized.pendingPerks=[];
+        }
+        migrated=true;
+      }else if(hasPlayableMalseWorld&&(!normalized.expertiseCompleted||(!normalized.stones.some(stone=>stone.certified)&&normalized.stones.length))){
+        normalized.expertiseCompleted=true;
+        if(normalized.stones.length&&!normalized.stones.some(stone=>stone.certified))certifyLegacyStones(normalized.stones);
+        migrated=true;
+      }
+
+      state=normalized;
+      restoredWorld=false;world=null;
+      if(validWorldSnapshot(envelope?.world,LEVELS[state.levelIndex]?.id)){
+        world=envelope.world;
+        const saved=envelope.player||{};
+        player={...player,x:finiteNumber(saved.x,player.x,0,world.w),y:finiteNumber(saved.y,player.y,0,world.h),angle:finiteNumber(saved.angle,0,-Math.PI,Math.PI),facing:saved.facing<0?-1:1,pose:["front","back","side"].includes(saved.pose)?saved.pose:"front"};
+        restoredWorld=true; buildTerrainCache(world); findNearest();
+      }
+      audio.setEnabled(state.sound!==false,{resume:false});syncSoundButton();
+      if(migrated)save();
+      return true;
+    } catch { return false; }
+  }
+  function refreshContinue(){ $("continueButton").classList.toggle("hidden",!storage.get(SAVE_KEY)); }
+  function syncSoundButton(){
+    const button=$("soundButton");if(!button)return;
+    button.textContent=state.sound?"♫":"×";
+    button.setAttribute("aria-pressed",state.sound?"true":"false");
+    button.setAttribute("aria-label",state.sound?"Vypnout zvuk":"Zapnout zvuk");
+  }
+  function getRecords(){try{const rows=JSON.parse(storage.get(RECORD_KEY)||"[]");return Array.isArray(rows)?rows.filter(row=>row&&typeof row==="object").slice(0,10):[];}catch{return[];}}
+  function addRecord(score,title){const rows=getRecords();rows.push({score,title,stones:state.stones.length,date:new Date().toISOString()});rows.sort((a,b)=>b.score-a.score);storage.set(RECORD_KEY,JSON.stringify(rows.slice(0,10)));}
+
+  function capturePointer(element,id){if(id===null||!element?.setPointerCapture)return;try{element.setPointerCapture(id);}catch{}}
+  function releasePointer(element,id){if(id===null||!element?.hasPointerCapture?.(id))return;try{element.releasePointerCapture(id);}catch{}}
+  function focusableElements(screen){return [...screen.querySelectorAll(FOCUSABLE)].filter(el=>el instanceof HTMLElement&&!el.hasAttribute("disabled")&&el.getClientRects().length>0);}
+  function focusElement(element){if(!(element instanceof HTMLElement)||!element.isConnected)return false;try{element.focus({preventScroll:true});}catch{element.focus();}return document.activeElement===element;}
+  function focusInitial(screen){
+    const preferred=screen.querySelector("[data-autofocus]")||screen.querySelector("button.primary-button:not([disabled]),a.primary-button:not([aria-disabled='true'])")||focusableElements(screen)[0]||screen;
+    focusElement(preferred);
+  }
+  function syncGameplayAccessibility(blocked=Boolean(activeScreen)){
+    for(const node of [canvas,hud,controls]){
+      const inaccessible=blocked||(node!==canvas&&node.classList.contains("hidden"));
+      node.toggleAttribute("inert",inaccessible);
+      if(inaccessible)node.setAttribute("aria-hidden","true");else node.removeAttribute("aria-hidden");
+    }
+    for(const announcement of [ui.theftAlert,ui.bossIntro]){
+      if(!announcement)continue;
+      if(blocked)announcement.setAttribute("aria-hidden","true");else announcement.removeAttribute("aria-hidden");
+    }
+  }
+  function showOnly(screen,{capture=true,focus=true,focusTarget=null}={}){
+    if(screen&&modalScreens.has(screen))resetControls();
+    const previous=activeScreen;
+    const origin=document.activeElement;
+    if(screen&&screen!==previous&&capture){if(origin instanceof HTMLElement&&origin!==document.body&&origin.isConnected)focusOrigins.set(screen,origin);else focusOrigins.delete(screen);}
+    Object.values(screens).forEach(candidate=>{
+      const visible=candidate===screen;
+      candidate.classList.toggle("visible",visible);
+      candidate.toggleAttribute("inert",!visible);
+      if(visible)candidate.removeAttribute("aria-hidden");else candidate.setAttribute("aria-hidden","true");
+    });
+    activeScreen=screen||null;
+    syncGameplayAccessibility(Boolean(activeScreen));
+    if(screen&&focus)requestAnimationFrame(()=>{
+      const target=focusTarget instanceof HTMLElement&&screen.contains(focusTarget)&&focusTarget.isConnected&&focusTarget.getClientRects().length>0?focusTarget:null;
+      if(!target||!focusElement(target))focusInitial(screen);
+    });
+    else if(!screen&&previous)requestAnimationFrame(()=>{
+      const target=focusOrigins.get(previous);
+      if(!(target instanceof HTMLElement)||!target.isConnected||target.getClientRects().length===0||target.closest("[inert]"))focusElement(canvas);
+      else focusElement(target);
+    });
+  }
+  function openAuxiliary(screen){screenParents.set(screen,activeScreen||screens.title);showOnly(screen);}
+  function closeAuxiliary(screen){
+    const parent=screenParents.get(screen)||screens.title;
+    const origin=focusOrigins.get(screen);
+    showOnly(parent,{capture:false,focusTarget:origin});
+  }
+  function trapModalFocus(event){
+    if(event.key!=="Tab"||!modalScreens.has(activeScreen))return false;
+    const items=focusableElements(activeScreen);
+    if(!items.length){event.preventDefault();focusElement(activeScreen);return true;}
+    const first=items[0],lastItem=items[items.length-1],current=document.activeElement;
+    if(event.shiftKey&&(current===first||!activeScreen.contains(current))){event.preventDefault();focusElement(lastItem);return true;}
+    if(!event.shiftKey&&(current===lastItem||!activeScreen.contains(current))){event.preventDefault();focusElement(first);return true;}
+    return false;
+  }
+  function setPlaying(on){if(!on)resetControls();hud.classList.toggle("hidden",!on);controls.classList.toggle("hidden",!on||!isTouch);app.classList.toggle("playing",on);syncGameplayAccessibility(Boolean(activeScreen));}
+  function haptic(pattern=12){try{navigator.vibrate?.(pattern);}catch{}}
+  function toast(text,type="",duration=1500){clearTimeout(toastTimer);ui.toast.textContent=text;ui.toast.className=`toast show ${type}`;toastTimer=setTimeout(()=>ui.toast.className="toast",duration);}
+  function showTheftAlert(){
+    theftAlertUntil=performance.now()+2150;
+    theftAlertShown=true;
+    ui.theftAlert?.classList.remove("hidden");
+    requestAnimationFrame(()=>{if(theftAlertShown)ui.theftAlert?.classList.add("show");});
+    flash=.32;flashColor="255,54,48";shake=Math.max(shake,16);haptic([70,35,90,40,120]);audio.sfx("boss");
+  }
+  function hideTheftAlert(){
+    if(!theftAlertShown)return;
+    theftAlertShown=false;
+    theftAlertUntil=0;
+    ui.theftAlert?.classList.remove("show");
+    setTimeout(()=>{if(!theftAlertShown)ui.theftAlert?.classList.add("hidden");},180);
+    const pending=world?.runtime?.pendingBoss;
+    if(world?.id==="besednice"&&pending&&!world.runtime.bossStarted){
+      world.runtime.pendingBoss=null;
+      startRival("karel",pending.x,pending.y);
+      toast("Dožeň Karla. Chyť ho, až se zastaví.","bad",2200);
+      save();
+    }
+  }
+  function showHint(text){ui.hint.textContent=text;ui.hint.classList.remove("hidden");}
+  function hideHint(){ui.hint.classList.add("hidden");}
+
+  function resize(){
+    const rect=app.getBoundingClientRect();
+    const w=Math.max(1,Math.round(rect.width||document.documentElement.clientWidth||innerWidth));
+    const h=Math.max(1,Math.round(rect.height||innerHeight));
+    const native=devicePixelRatio||1;
+    const pixelBudget=isTouch?1800000:3000000;
+    const budgetDpr=Math.sqrt(pixelBudget/Math.max(1,w*h));
+    const dpr=Math.max(1,Math.min(native,2,budgetDpr));
+    viewport={w,h,dpr};
+    canvas.width=Math.round(w*dpr);canvas.height=Math.round(h*dpr);canvas.style.width="100%";canvas.style.height="100%";
+    screenCtx.setTransform(dpr,0,0,dpr,0,0);screenCtx.imageSmoothingEnabled=true;
+    if(world&&world.theme!=="city")buildTerrainCache(world);
+  }
+
+  function addProp(type,x,y,o={}){world.props.push({type,x,y,...o});}
+  function addObstacle(x,y,w,h,o={}){world.obstacles.push({x,y,w,h,...o});}
+  function addHotspot(x,y,o={}){const profile=Boolean(o.needsFill||o.special==="hedgehog");world.hotspots.push({x,y,r:profile?42:24,w:profile?74:0,h:profile?42:0,angle:profile?rand(-.22,.22):0,revealed:Boolean(o.revealed),active:true,ttl:0,...o});}
+  function addItem(type,x,y,o={}){world.items.push({type,x,y,r:20,active:true,visualVariant:Math.abs(Math.round((x*17+y*31)%4)),...o});}
+  function addPatrol(type,points,o={}){const p=points[0];world.patrols.push({type,x:p.x,y:p.y,points,index:1,speed:o.speed||80,vision:o.vision||180,angle:0,visualAngle:0,turnAmount:0,facing:1,pose:"front",moving:false,motionRatio:0,motionPhase:0,wheelRotation:0,distanceTravelled:0,workPhase:0,working:Boolean(o.working),active:true,...o});}
+
+  function generateLevel(index){
+    currentDig=null;currentSample=null;digKind="dig";digHolding=false;digFinishDelay=0;
+    const level=LEVELS[index];
+    world={id:level.id,theme:level.theme,w:1800,h:1200,props:[],obstacles:[],hotspots:[],items:[],patrols:[],hazards:[],particles:[],radarPings:[],exit:null,runtime:{},rain:level.theme==="field"?1:0};
+    if(level.id==="chlum") generateChlum();
+    if(level.id==="locenice") generateLocenice();
+    if(level.id==="nesmen") generateNesmen();
+    if(level.id==="besednice") generateBesednice();
+    if(level.id==="malse") generateMalse();
+    buildTerrainCache(world);
+    stopPlayerMotion();player.footstepCycle=-1;
+    camera.x=player.x-viewport.w/2;camera.y=player.y-viewport.h/2;nearest=null;scanCooldown=0;scanPulse=0;
+    state.heat=0;state.combo=1;state.comboTimer=0;audio.setTheme(level.music);updateHUD(true);
+  }
+
+  function buildTerrainCache(nextWorld){
+    const previousCount=terrainCache.generated||0;
+    if(!nextWorld||nextWorld.theme==="city"){terrainCache={key:"",canvas:null,scale:1,generated:previousCount};return;}
+    const scale=Math.max(1,Math.min(viewport.dpr||1,1.5));
+    const key=`${nextWorld.id}:${nextWorld.w}x${nextWorld.h}@${scale.toFixed(2)}`;
+    if(terrainCache.key===key&&terrainCache.canvas)return;
+    const surface=document.createElement("canvas");
+    surface.width=Math.max(1,Math.round(nextWorld.w*scale));
+    surface.height=Math.max(1,Math.round(nextWorld.h*scale));
+    const cacheCtx=surface.getContext("2d",{alpha:false});
+    if(!cacheCtx){terrainCache={key:"",canvas:null,scale:1,generated:previousCount};return;}
+    const previousCtx=ctx;
+    try{
+      ctx=cacheCtx;
+      ctx.setTransform(scale,0,0,scale,0,0);
+      ctx.imageSmoothingEnabled=true;
+      drawGround();
+      drawGroundDetails();
+    }finally{ctx=previousCtx;}
+    terrainCache={key,canvas:surface,scale,generated:previousCount+1};
+  }
+
+  function generateChlum(){
+    world.runtime={permit:true,collected:0,provenanceConfirmed:false}; player.x=360;player.y=1070;
+    addProp("farm",135,1080,{scale:.82,visualScale:2.5}); addProp("npc",280,990,{name:"Václav",avatar:"V",role:"farmer"});
+    for(let i=0;i<12;i++)addProp("soilheap",rand(260,1600),rand(240,980),{scale:rand(.65,1.2)});
+    for(let i=0;i<20;i++)addProp("stubble",rand(120,1720),rand(180,1100),{scale:rand(.7,1.15)});
+    for(const [i,p] of [[500,840],[820,910],[1120,760],[1440,900],[620,480],[1040,420],[1500,500],[440,690],[1250,640]].entries())addItem("stone",p[0],p[1],{hidden:true,rarity:i===8?"good":i===6?"rare":"common",documented:false});
+    addPatrol("tractor",[{x:350,y:300},{x:1570,y:300},{x:1570,y:470},{x:350,y:470}],{speed:115,vision:0,scale:1.5,working:true,variant:0});
+    addPatrol("farmer",[{x:1580,y:920},{x:1480,y:650},{x:1660,y:520}],{speed:65,vision:140,requires:"permit"});
+    world.exit={x:1650,y:150,r:54,label:"Odjezd"};
+  }
+
+  function generateLocenice(){
+    world.runtime={correct:0,real:0,identified:0};player.x=160;player.y=1040;
+    for(let i=0;i<58;i++){
+      const x=rand(30,1770),y=rand(30,1170);
+      if(Math.hypot(x-900,y-650)>170)addProp("realpine",x,y,{scale:rand(1.0,1.7),lean:rand(-.12,.12),rooted:i%3===0,variant:i%3});
+    }
+    for(let i=0;i<18;i++)addProp("sandmound",rand(210,1580),rand(160,1080),{scale:rand(.7,1.35),angle:rand(-.25,.25)});
+    for(let i=0;i<11;i++)addProp("sandpit",rand(300,1500),rand(190,1030),{w:rand(70,150),h:rand(36,75),angle:rand(-.25,.25)});
+    for(let i=0;i<10;i++)addProp("fallenpine",rand(260,1500),rand(220,980),{scale:rand(.7,1.1),angle:rand(-.65,.65)});
+    addProp("sign",220,1010,{text:"Ločenice"});
+    const samples=[...SAMPLES,...SAMPLES].sort(()=>Math.random()-.5).slice(0,9);
+    const pts=[[420,850],[660,950],[910,820],[1210,950],[1480,820],[520,520],[840,410],[1180,560],[1510,390]];
+    samples.forEach((s,i)=>addItem("sample",pts[i][0],pts[i][1],{hidden:true,sample:s}));
+    addPatrol("farmer",[{x:400,y:250},{x:1500,y:250},{x:1500,y:690},{x:400,y:690}],{speed:72,vision:150});
+    world.exit={x:1650,y:150,r:54,label:"Pokračovat"};
+  }
+
+  function generateNesmen(){
+    world.runtime={permit:false,dug:0,filled:0,open:0};player.x=360;player.y=1050;
+    addProp("npc",290,980,{name:"Lesník",avatar:"L",role:"owner"}); addProp("hut",120,1060,{scale:.9,visualScale:2.25});
+    for(let i=0;i<62;i++){const x=rand(30,1770),y=rand(30,1170);if(Math.hypot(x-900,y-650)>180)addProp("tree",x,y,{scale:rand(1.0,1.7)});}
+    for(let i=0;i<18;i++)addProp("pine",rand(40,1760),rand(40,1160),{scale:rand(.95,1.45)});
+    for(let i=0;i<24;i++)addProp("bush",rand(30,1770),rand(30,1170),{scale:rand(.6,1)});
+    for(let i=0;i<22;i++)addProp("fern",rand(80,1720),rand(90,1100),{scale:rand(.7,1.15)});
+    for(let i=0;i<30;i++)addProp("grass",rand(90,1710),rand(110,1110),{scale:rand(.7,1.25)});
+    for(let i=0;i<10;i++)addProp("stump",rand(160,1650),rand(180,1060),{scale:rand(.8,1.2)});
+    for(let i=0;i<6;i++)addProp("log",rand(220,1580),rand(210,990),{scale:rand(.8,1.2),angle:rand(-.6,.6)});
+    [[520,880],[930,860],[1290,740],[720,390]].forEach((p,i)=>addHotspot(p[0],p[1],{rarity:i===3?"good":"common",documented:true,needsFill:true,marked:true}));
+    addPatrol("ranger",[{x:420,y:560},{x:840,y:300},{x:1420,y:470},{x:1320,y:980},{x:650,y:1030}],{speed:82,vision:190});
+    world.exit={x:1650,y:150,r:54,label:"Lesní cesta"};
+  }
+
+  function generateBesednice(){
+    world.runtime={clues:0,hedgehog:false,bossStarted:false,bossHits:0,bossDefeated:false,chaseStarted:false};player.x=150;player.y=1030;
+    for(let i=0;i<28;i++){
+      const x=rand(20,1780),y=rand(20,1180);
+      const clearStart=Math.hypot(x-150,y-1030)<240;
+      const clearArena=x>650&&x<1400&&y>300&&y<900;
+      if((x<260||x>1550||y<190)&&!clearStart&&!clearArena)addProp("realpine",x,y,{scale:rand(1.05,1.65),lean:rand(-.08,.08)});
+    }
+    for(let i=0;i<14;i++)addProp("earthbank",rand(280,1520),rand(190,1010),{scale:rand(.8,1.4),angle:rand(-.22,.22)});
+    for(let i=0;i<11;i++)addProp("minepit",rand(310,1480),rand(260,960),{w:rand(82,160),h:rand(44,88),angle:rand(-.25,.25)});
+    for(let i=0;i<11;i++)addProp("trackscar",rand(260,1500),rand(220,1020),{scale:rand(.9,1.35),angle:rand(-.35,.35)});
+    addProp("excavator",1040,370,{scale:1.5,angle:-.08,working:true,workSpeed:1,workPhase:.65,turretAngle:-.08,turretTarget:.34,variant:0});
+    addProp("excavator",430,690,{scale:1.25,angle:.18,working:false,workSpeed:0,workPhase:2.15,turretAngle:-.14,turretTarget:-.14,variant:1});
+    addProp("lamp",1100,340,{scale:1.25});addProp("lamp",500,660,{scale:1.15});addProp("lamp",1420,520,{scale:1.1});
+    addProp("sign",250,980,{text:"Besednice"});
+    [[410,850],[900,610],[1390,350]].forEach((p,i)=>addItem("clue",p[0],p[1],{hidden:true,label:["čerstvě odkrytá vrstva","hluboký otisk pásu","úlomek ježkové skulptace"][i]}));
+    addPatrol("digger",[{x:520,y:260},{x:1400,y:300},{x:1470,y:870},{x:650,y:930}],{speed:92,vision:190});
+    world.exit={x:1650,y:150,r:54,label:"Výjezd k Malši"};
+  }
+
+  function generateMalse(){
+    const certificateStoneIds=certifiedStoneIds();
+    world.runtime={certificateRecovered:false,certificateStoneIds:[...certificateStoneIds],recoveredCertificateStoneIds:[],papers:0,registered:false,fraudResolved:false,fraudAttempts:0,bossStarted:false,bossHits:0,bossDefeated:false,dossierRecovered:false,frantaEscaped:false,arrivalIncidentSeen:false,arrivalIncidentActive:false,arrivalIncidentTimer:0};player.x=720;player.y=1060;
+    for(let y=150;y<1100;y+=145){addProp("tree",510,y,{scale:1.38});addProp("lamp",650,y);}
+    // Authored park clearings keep the documents and the existing patrol routes legible.
+    [[1160,690],[1370,610],[1630,550],[1730,780],[1450,920],[1190,1040],[1670,1060]].forEach(([x,y],i)=>addProp("tree",x,y,{scale:1.45+(i%3)*.16}));
+    [310,650,930].forEach(y=>{addProp("bench",810,y);addProp("bench",1530,y+110);});
+    addProp("lamp",1320,455);addProp("lamp",1660,435);
+    addProp("bridge",330,520,{scale:1}); addProp("slavie",1460,235,{scale:1.26}); addProp("sign",780,1000,{text:"Zátkovo nábřeží"});
+    addProp("plaza",1440,400,{scale:1.0});
+    addItem("paper",880,1030,{hidden:true,special:"certificate",label:"složka s certifikáty pravosti",stoneIds:[...certificateStoneIds]});
+    [[760,860],[1040,560],[1280,360]].forEach((p,i)=>addItem("paper",p[0],p[1],{label:["detail povrchu vzorku","fotografie údajného nálezu","záznam původu a času nálezu"][i]}));
+    addPatrol("car",[{x:970,y:1080},{x:970,y:160}],{speed:190,vision:0,scale:1.7,visualScale:1.25,variant:0});
+    world.exit={x:1450,y:250,r:66,label:"KD Slávie"};
+  }
+
+  function generateBesedniceReference(){
+    currentDig=null;currentSample=null;digKind="dig";digHolding=false;digFinishDelay=0;
+    state=freshState();state.levelIndex=3;
+    const portrait=viewport.h>viewport.w*1.18;
+    const w=portrait?720:Math.round(700*viewport.w/Math.max(1,viewport.h));
+    const h=portrait?Math.round(720*viewport.h/Math.max(1,viewport.w)):700;
+    const layout={
+      w,h,player:[w*.5,h*.58],bank:[w*.24,h*.4],pit:[w*.68,h*.55],
+      tracks:[w*.52,h*.3],rocks:[[w*.18,h*.7],[w*.8,h*.3],[w*.76,h*.77]],
+      sign:[w*.14,h*.86]
+    };
+    world={id:"besednice",theme:"night",w:layout.w,h:layout.h,props:[],obstacles:[],hotspots:[],items:[],patrols:[],hazards:[],particles:[],radarPings:[],exit:null,runtime:{clues:0,hedgehog:false,bossStarted:false,bossHits:0,bossDefeated:false,chaseStarted:false},rain:0,referenceScene:true};
+    player.x=layout.player[0];player.y=layout.player[1];player.angle=0;player.facing=1;player.pose="front";stopPlayerMotion();player.footstepCycle=-1;
+    addProp("earthbank",layout.bank[0],layout.bank[1],{scale:1.35,angle:-.08,reference:true});
+    addProp("minepit",layout.pit[0],layout.pit[1],{w:150,h:82,angle:.08,reference:true});
+    addProp("trackscar",layout.tracks[0],layout.tracks[1],{scale:1.2,angle:-.15,reference:true});
+    layout.rocks.forEach((q,i)=>addProp("rock",q[0],q[1],{scale:.9+i*.08,reference:true}));
+    addProp("sign",layout.sign[0],layout.sign[1],{text:"Besednice"});
+    addProp("lamp",w*.83,h*.64,{scale:1.05,reference:true});
+    buildTerrainCache(world);
+    camera.x=0;camera.y=0;nearest=null;scanCooldown=0;scanPulse=0;state.heat=0;state.combo=1;state.comboTimer=0;updateHUD(true);
+    return {level:world.id,reference:true,portrait,player:{x:player.x,y:player.y}};
+  }
+
+  function generateNesmenReference(){
+    currentDig=null;currentSample=null;digKind="dig";digHolding=false;digFinishDelay=0;
+    state=freshState();state.levelIndex=2;
+    const portrait=viewport.h>viewport.w*1.18;
+    const w=portrait?720:Math.round(700*viewport.w/Math.max(1,viewport.h));
+    const h=portrait?Math.round(720*viewport.h/Math.max(1,viewport.w)):700;
+    const layout={
+      w,h,player:[w*.54,h*.55],hut:[w*.17,h*.78],
+      trees:[[w*.12,h*.18,1.35],[w*.86,h*.2,1.4],[w*.83,h*.74,1.3]],
+      ferns:[[w*.34,h*.37,1.15],[w*.7,h*.35,1.0],[w*.25,h*.66,1.1],[w*.68,h*.72,1.2]],
+      profile:[w*.57,h*.38],log:[w*.42,h*.72],stump:[w*.78,h*.57]
+    };
+    world={id:"nesmen",theme:"forest",w:layout.w,h:layout.h,props:[],obstacles:[],hotspots:[],items:[],patrols:[],hazards:[],particles:[],radarPings:[],exit:null,runtime:{permit:true,dug:0,filled:0,open:0},rain:0,referenceScene:true};
+    player.x=layout.player[0];player.y=layout.player[1];player.angle=0;player.facing=1;player.pose="front";stopPlayerMotion();player.footstepCycle=-1;
+    addProp("hut",layout.hut[0],layout.hut[1],{scale:.9,visualScale:2.25,reference:true});
+    layout.trees.forEach((q,i)=>addProp(i===1?"pine":"tree",q[0],q[1],{scale:q[2],reference:true}));
+    layout.ferns.forEach(q=>addProp("fern",q[0],q[1],{scale:q[2],reference:true}));
+    addProp("log",layout.log[0],layout.log[1],{scale:1.0,angle:.2,reference:true});
+    addProp("stump",layout.stump[0],layout.stump[1],{scale:1.0,reference:true});
+    addHotspot(layout.profile[0],layout.profile[1],{rarity:"common",documented:true,needsFill:true,marked:true,revealed:true,angle:-.08});
+    buildTerrainCache(world);
+    camera.x=0;camera.y=0;nearest=null;scanCooldown=0;scanPulse=0;state.heat=0;state.combo=1;state.comboTimer=0;updateHUD(true);
+    return {level:world.id,reference:true,portrait,player:{x:player.x,y:player.y}};
+  }
+
+  function generateLoceniceReference(){
+    currentDig=null;currentSample=null;digKind="dig";digHolding=false;digFinishDelay=0;
+    state=freshState();state.levelIndex=1;
+    const portrait=viewport.h>viewport.w*1.18;
+    const w=portrait?720:Math.round(700*viewport.w/Math.max(1,viewport.h));
+    const h=portrait?Math.round(720*viewport.h/Math.max(1,viewport.w)):700;
+    const layout={
+      w,h,
+      player:[w*.52,h*.52],
+      pines:[[w*.14,h*.18,1.5,0],[w*.82,h*.2,1.3,1],[w*.18,h*.7,1.35,2],[w*.84,h*.76,1.5,0]],
+      mound:[w*.7,h*.65],
+      fallen:[w*.36,h*.4],
+      sign:[w*.14,h*.88]
+    };
+    world={id:"locenice",theme:"meadow",w:layout.w,h:layout.h,props:[],obstacles:[],hotspots:[],items:[],patrols:[],hazards:[],particles:[],radarPings:[],exit:null,runtime:{correct:0,real:0,identified:0},rain:0,referenceScene:true};
+    player.x=layout.player[0];player.y=layout.player[1];player.angle=0;player.facing=1;player.pose="front";stopPlayerMotion();player.footstepCycle=-1;
+    layout.pines.forEach((q,i)=>addProp("realpine",q[0],q[1],{scale:q[2],lean:i%2?.04:-.03,rooted:i===0||i===3,variant:q[3]}));
+    addProp("sandmound",layout.mound[0],layout.mound[1],{scale:1.05,angle:-.08});
+    addProp("fallenpine",layout.fallen[0],layout.fallen[1],{scale:.95,angle:.22});
+    addProp("sign",layout.sign[0],layout.sign[1],{text:"Ločenice"});
+    buildTerrainCache(world);
+    camera.x=0;camera.y=0;nearest=null;scanCooldown=0;scanPulse=0;state.heat=0;state.combo=1;state.comboTimer=0;updateHUD(true);
+    return {level:world.id,reference:true,portrait,player:{x:player.x,y:player.y}};
+  }
+
+  function generateScaleReference(){
+    currentDig=null;currentSample=null;digKind="dig";digHolding=false;digFinishDelay=0;
+    state=freshState();state.levelIndex=0;
+    const portrait=viewport.h>viewport.w*1.18;
+    const layout=portrait
+      ? {w:720,h:1450,player:[215,610],farm:[360,330],bench:[470,610],car:[190,850],tractor:[490,855],tree:[190,1170],excavator:[500,1190]}
+      : {w:1200,h:900,player:[430,330],farm:[200,330],bench:[620,330],car:[220,570],tractor:[560,575],tree:[940,650],excavator:[690,790]};
+    world={id:"chlum",theme:"field",w:layout.w,h:layout.h,props:[],obstacles:[],hotspots:[],items:[],patrols:[],hazards:[],particles:[],radarPings:[],exit:null,runtime:{permit:true,collected:0},rain:0,referenceScene:true};
+    player.x=layout.player[0];player.y=layout.player[1];player.angle=0;player.facing=1;player.pose="front";stopPlayerMotion();player.footstepCycle=-1;
+    addProp("farm",layout.farm[0],layout.farm[1],{scale:3.0,reference:true});
+    addProp("bench",layout.bench[0],layout.bench[1],{scale:1.15,reference:true});
+    addPatrol("car",[{x:layout.car[0],y:layout.car[1]},{x:layout.car[0],y:layout.car[1]}],{speed:0,vision:0,scale:4.0,visualScale:1,variant:1,reference:true});
+    addPatrol("tractor",[{x:layout.tractor[0],y:layout.tractor[1]},{x:layout.tractor[0],y:layout.tractor[1]}],{speed:0,vision:0,scale:2.5,reference:true,working:true,variant:1});
+    addProp("tree",layout.tree[0],layout.tree[1],{scale:2.5,variant:1,reference:true});
+    addProp("excavator",layout.excavator[0],layout.excavator[1],{scale:2.0,angle:0,reference:true,working:false,workSpeed:0,workPhase:1.35,turretAngle:.08,turretTarget:.08,variant:1});
+    buildTerrainCache(world);
+    camera.x=0;camera.y=0;nearest=null;scanCooldown=0;scanPulse=0;state.heat=0;state.combo=1;state.comboTimer=0;updateHUD(true);
+    return {level:world.id,reference:true,portrait,player:{x:player.x,y:player.y}};
+  }
+
+  function startNew(){
+    state=freshState();audio.setEnabled(state.sound,{resume:false});syncSoundButton();world=null;restoredWorld=false;storage.remove(SAVE_KEY);showBrief(0);audio.start();audio.sfx("click");
+  }
+  function continueGame(){
+    if(!load()){startNew();return;}
+    syncSoundButton();
+    if(state.pendingTransition){
+      audio.setTheme(LEVELS[state.levelIndex]?.music||"menu");audio.start();
+      if(state.pendingTransition==="jury"){showJury();return;}
+      if(state.pendingTransition==="expertise"){showExpertise();return;}
+      showPerks();return;
+    }
+    showBrief(state.levelIndex);audio.start();
+  }
+  function showBrief(index){
+    state.levelIndex=index;mode="brief";setPlaying(false);const l=LEVELS[index];audio.setTheme(l.music);
+    $("briefKicker").textContent=`LOKALITA ${index+1} / ${LEVELS.length}`;$("briefTitle").textContent=l.title;$("briefText").textContent=l.text;$("briefGoal").textContent=l.goal;const whyEl=$("briefWhy"); if(whyEl) whyEl.textContent=l.why||"Posil sbírku a pokračuj směrem do KD Slávie na akci Na zelené vlně.";
+    showOnly(screens.brief);
+  }
+  function normalizeMalseWorld(){
+    if(!world||world.id!=="malse")return;
+    const r=world.runtime||(world.runtime={});
+    r.papers=Math.round(finiteNumber(r.papers,0,0,3));
+    if(typeof r.arrivalIncidentSeen!=="boolean")r.arrivalIncidentSeen=Boolean(r.certificateRecovered||r.registered||r.papers>0||r.bossStarted||r.bossDefeated);
+    if(typeof r.arrivalIncidentActive!=="boolean")r.arrivalIncidentActive=false;
+    r.arrivalIncidentTimer=finiteNumber(r.arrivalIncidentTimer,0,0,2);
+    if(r.arrivalIncidentActive&&!world.props.some(prop=>prop.arrivalFranta))addProp("npc",player.x+210,player.y-25,{name:"Franta",avatar:"F",role:"rival",used:true,arrivalFranta:true});
+    if(typeof r.certificateRecovered!=="boolean")r.certificateRecovered=Boolean(r.registered||r.papers>0||r.bossStarted||r.bossDefeated);
+    const certifiedIds=certifiedStoneIds();
+    r.certificateStoneIds=[...certifiedIds];
+    const recoveredIds=Array.isArray(r.recoveredCertificateStoneIds)?r.recoveredCertificateStoneIds:[];
+    r.recoveredCertificateStoneIds=r.certificateRecovered
+      ? [...new Set(recoveredIds.filter(id=>certifiedIds.includes(id)))]
+      : [];
+    if(r.certificateRecovered&&r.recoveredCertificateStoneIds.length!==certifiedIds.length)r.recoveredCertificateStoneIds=[...certifiedIds];
+    const certificate=world.items.find(item=>item.type==="paper"&&item.special==="certificate");
+    if(certificate)certificate.stoneIds=[...r.certificateStoneIds];
+    if(!r.certificateRecovered){
+      if(certificate)certificate.active=true;
+      else addItem("paper",880,1030,{hidden:true,special:"certificate",label:"složka s certifikáty pravosti",stoneIds:[...r.certificateStoneIds]});
+    }
+    if(typeof r.registered!=="boolean")r.registered=Boolean(r.papers>0||r.bossStarted||r.bossDefeated);
+    if(typeof r.fraudResolved!=="boolean")r.fraudResolved=Boolean(r.bossStarted||r.bossDefeated);
+    if(typeof r.bossStarted!=="boolean")r.bossStarted=false;
+    if(typeof r.bossDefeated!=="boolean")r.bossDefeated=false;
+    if(typeof r.frantaEscaped!=="boolean")r.frantaEscaped=false;
+    if(typeof r.dossierRecovered!=="boolean")r.dossierRecovered=Boolean(r.bossDefeated&&!r.frantaEscaped);
+    r.fraudAttempts=Math.round(finiteNumber(r.fraudAttempts,0,0,99));
+    delete r.bossDelay;
+    if(Array.isArray(world.patrols))world.patrols=world.patrols.filter(p=>p?.type!=="bike"&&p?.type!=="police");
+    if(world.rival?.name==="franta"){world.rival.maxHits=1;world.rival.baseSpeed=142;world.rival.speed=Math.min(finiteNumber(world.rival.speed,142,0,500),190);world.rival.escapeTarget={x:1650,y:980};}
+  }
+  function enterLevel(){
+    if(!restoredWorld)generateLevel(state.levelIndex);
+    normalizeMalseWorld();
+    if(world?.id==="malse"&&!world.runtime.arrivalIncidentSeen)startMalseArrivalIncident();
+    const interruptedKarel=world?.id==="besednice"&&world.runtime?.chaseStarted&&!world.runtime?.bossDefeated&&!(world.rival?.active&&world.rival.name==="karel")
+      ? world.runtime.pendingBoss||{
+          x:finiteNumber(world.rival?.x,clamp(player.x+180,80,1720),80,1720),
+          y:finiteNumber(world.rival?.y,clamp(player.y-100,100,1120),100,1120)
+        }
+      : null;
+    const interruptedFranta=world?.id==="malse"&&world.runtime?.fraudResolved&&!world.runtime?.bossDefeated&&!(world.rival?.active&&world.rival.name==="franta");
+    restoredWorld=false;mode="playing";showOnly(null);setPlaying(true);audio.start();
+    if(interruptedKarel){
+      world.runtime.pendingBoss=null;
+      startRival("karel",interruptedKarel.x,interruptedKarel.y);
+      toast("Karel pokračuje v útěku s ježkem","bad",1800);
+    }else if(interruptedFranta){
+      startRival("franta",1260,430);
+      toast("Franta pokračuje v útěku se složkou","bad",1800);
+    }
+    save();
+  }
+
+  function startMalseArrivalIncident(){
+    if(!world||world.id!=="malse"||world.runtime.arrivalIncidentSeen)return;
+    const r=world.runtime;
+    r.arrivalIncidentSeen=true;r.arrivalIncidentActive=true;r.arrivalIncidentTimer=1.35;
+    if(!world.props.some(prop=>prop.arrivalFranta))addProp("npc",player.x+210,player.y-25,{name:"Franta",avatar:"F",role:"rival",used:true,arrivalFranta:true});
+    const certificate=world.items.find(item=>item.type==="paper"&&item.special==="certificate");
+    if(certificate){certificate.active=true;certificate.hidden=true;certificate.x=880;certificate.y=1030;certificate.stoneIds=[...(r.certificateStoneIds||certifiedStoneIds())];}
+    if(ui.bossIntroName)ui.bossIntroName.textContent="FRANTA";
+    if(ui.bossIntroText)ui.bossIntroText.textContent="Franta do tebe vrazil. Složka s certifikáty vypadla na nábřeží — najdi ji radarem.";
+    ui.bossIntro?.classList.remove("hidden");ui.bossIntro?.classList.add("show");bossIntroTimer=2.35;
+    audio.sfx("alert");haptic([25,35,25]);shake=Math.max(shake,8);flash=.12;flashColor="190,100,75";
+    toast("NÁRAZ · SLOŽKA S CERTIFIKÁTY VYPADLA","bad",2200);save();
+  }
+  function updateMalseArrivalIncident(dt){
+    if(!world||world.id!=="malse"||!world.runtime.arrivalIncidentActive)return false;
+    const r=world.runtime;
+    input.x=input.y=0;stopPlayerMotion();
+    r.arrivalIncidentTimer=Math.max(0,finiteNumber(r.arrivalIncidentTimer,0,0,2)-dt);
+    const rival=world.props.find(prop=>prop.arrivalFranta);
+    if(rival){
+      const progress=clamp(1-r.arrivalIncidentTimer/1.35,0,1);
+      rival.x=lerp(player.x+210,player.x-220,progress);
+      rival.y=player.y-25-Math.sin(progress*Math.PI)*18;
+      rival.angle=Math.PI;rival.facing=-1;rival.pose="side";
+    }
+    if(r.arrivalIncidentTimer<=0){
+      r.arrivalIncidentActive=false;
+      world.props=world.props.filter(prop=>!prop.arrivalFranta);
+      save();
+    }
+    return true;
+  }
+
+  function levelGoal(){
+    const r=world.runtime;
+    if(world.id==="chlum")return `Sběr z povrchu ${r.collected}/6`;
+    if(world.id==="locenice")return `Správně ${r.correct}/5 · pravé ${r.real}/3`;
+    if(world.id==="nesmen")return r.permit?`Profily ${r.dug}/3 · zahrabáno ${r.filled}/3`:`Získej souhlas lesníka`;
+    if(world.id==="besednice")return r.bossStarted?(r.bossDefeated?"Ježek je v bezpečí":"Získej ježka zpět"):r.clues<3?`Stopy ${r.clues}/3`:`Vykopej ježkový profil`;
+    if(world.id==="malse"){if(!r.certificateRecovered)return "Najdi složku s certifikáty";if(!r.registered)return "Zaregistruj certifikované kusy u vstupu";if(r.papers<3)return `Indicie ${r.papers}/3`;if(!r.fraudResolved)return "Prověř Frantův vzorek u vstupu";if(!r.bossDefeated)return "Dostihni Frantu a vezmi kontrolní podklady zpět";return r.dossierRecovered?"Vstup do výstavního sálu":"Vstup do sálu · kopie podkladů zajištěna";}
+    return "Výprava";
+  }
+  function goalComplete(){
+    const r=world.runtime;
+    if(world.id==="chlum")return r.collected>=6;
+    if(world.id==="locenice")return r.correct>=5&&r.real>=3;
+    if(world.id==="nesmen")return r.permit&&r.dug>=3&&r.filled>=3;
+    if(world.id==="besednice")return r.bossDefeated;
+    if(world.id==="malse")return Boolean(r.certificateRecovered&&r.registered&&r.papers>=3&&r.fraudResolved&&r.bossDefeated);
+    return false;
+  }
+
+  function updateHUD(force=false){
+    if(!world)return;
+    const now=performance.now();if(!force&&now<hudNextUpdate)return;hudNextUpdate=now+100;
+    ui.missionNumber.textContent=state.levelIndex+1;ui.place.textContent=LEVELS[state.levelIndex].name.toUpperCase();ui.objective.textContent=levelGoal();
+    ui.bag.textContent=state.stones.length;ui.heat.style.width=`${clamp(state.heat,0,100)}%`;
+    ui.heatPill?.classList.toggle("detected",dangerActive);
+    ui.heatPill?.classList.toggle("warning",state.heat>=35&&state.heat<70&&!dangerActive);
+    ui.heatPill?.classList.toggle("critical",state.heat>=70);
+    if(ui.heatPill)ui.heatPill.setAttribute("aria-label",dangerActive?`${dangerSource} tě vidí. Pozornost ${Math.round(state.heat)} procent`:`Pozornost hlídky ${Math.round(state.heat)} procent`);
+    if(ui.dangerMeterText)ui.dangerMeterText.textContent=dangerActive?"ODHALENÍ":state.heat>=70?"KRITICKÉ":state.heat>=35?"POZOR":"KLID";
+    ui.dangerBanner?.classList.toggle("hidden",!dangerActive);
+    if(ui.dangerText&&dangerActive)ui.dangerText.textContent=dangerSource.toUpperCase();
+    const boss=world.rival;
+    const bossVisible=Boolean(boss?.active);
+    ui.bossHud?.classList.toggle("hidden",!bossVisible);
+    ui.bossHud?.classList.toggle("enraged",bossVisible&&boss.phase>=3);ui.bossHud?.classList.toggle("vulnerable",bossVisible&&boss.stunTimer>0);
+    if(bossVisible){const isKarel=boss.name==="karel",display=isKarel?"KAREL":"FRANTA";if(ui.bossName)ui.bossName.textContent=display;if(ui.bossFill)ui.bossFill.style.width=`${clamp((boss.maxHits-boss.hits)/boss.maxHits*100,0,100)}%`;if(ui.bossPhase)ui.bossPhase.textContent=isKarel?(boss.graceTimer>0?"PŘIPRAV SE":boss.stunTimer>0?"ZASTAVIL SE · CHYŤ HO":boss.dashTime>0?"SPRINTUJE":boss.phase>=3?"JEŠTĚ ZRYCHLUJE":boss.phase===2?"ZRYCHLUJE":"POČKEJ, AŽ ZASTAVÍ"):(boss.graceTimer>0?"BERE SLOŽKU":"DOSTIHNI HO · ZASTAVIT");}
+    hud.classList.toggle("danger-shake",dangerActive&&state.heat>=60);app.classList.toggle("danger-state",dangerActive);
+    ui.combo.textContent=`KOMBO ×${state.combo}`;ui.combo.classList.toggle("hidden",state.combo<=1);
+  }
+
+  function playerSpeed(){return 185*(1+state.perks.boots*.12);}
+  function blocked(x,y){
+    if(x<24||y<24||x>world.w-24||y>world.h-24)return true;
+    for(const o of world.obstacles){if(x+player.r>o.x-o.w/2&&x-player.r<o.x+o.w/2&&y+player.r>o.y-o.h/2&&y-player.r<o.y+o.h/2)return true;}
+    return false;
+  }
+  function stopPlayerMotion(){player.vx=0;player.vy=0;player.speedRatio=0;player.moving=false;}
+  function applyHumanoidDirection(actor,dx,dy){
+    const length=Math.hypot(dx,dy);
+    if(length<=.0001)return;
+    const nx=dx/length,ny=dy/length;
+    actor.angle=Math.atan2(ny,nx);
+    if(Math.abs(nx)>.18)actor.facing=nx<0?-1:1;
+    actor.pose=Math.abs(ny)>.66?(ny<0?"back":"front"):"side";
+  }
+  function updateHumanoidMotionState(actor,dx,dy,movedDistance,dt,speedReference=160,{orient=true}={}){
+    const moving=movedDistance>.02;
+    if(orient&&moving)applyHumanoidDirection(actor,dx,dy);
+    actor.moving=moving;
+    const actualSpeed=dt>0?movedDistance/dt:0;
+    actor.motionRatio=moving?clamp(actualSpeed/Math.max(1,speedReference),0,1):0;
+    if(moving)actor.motionPhase=(actor.motionPhase||0)+movedDistance*.085;
+    actor.distanceTravelled=(actor.distanceTravelled||0)+movedDistance;
+  }
+  function updatePlayerMovement(dt){
+    player.animTime+=dt;
+    const inputLength=Math.hypot(input.x,input.y);
+    const inputStrength=clamp(inputLength,0,1);
+    const hasInput=inputStrength>.04;
+    const maxSpeed=playerSpeed()*(inputStrength>.78?1.18:1);
+    const nx=hasInput?input.x/inputLength:0,ny=hasInput?input.y/inputLength:0;
+    const currentSpeed=Math.hypot(player.vx,player.vy);
+    const speed=approach(currentSpeed,hasInput?maxSpeed*inputStrength:0,(hasInput?940:1180)*dt);
+    if(hasInput){
+      applyHumanoidDirection(player,nx,ny);
+      player.vx=nx*speed;player.vy=ny*speed;
+    }else if(speed>0){
+      player.vx=Math.cos(player.angle)*speed;player.vy=Math.sin(player.angle)*speed;
+    }else{player.vx=0;player.vy=0;}
+    player.speedRatio=clamp(speed/Math.max(1,playerSpeed()*1.18),0,1);
+    player.moving=speed>7;
+    const nextX=player.x+player.vx*dt,nextY=player.y+player.vy*dt;
+    let moved=false;
+    if(!blocked(nextX,player.y)){player.x=nextX;moved=moved||Math.abs(player.vx)>.1;}else player.vx=0;
+    if(!blocked(player.x,nextY)){player.y=nextY;moved=moved||Math.abs(player.vy)>.1;}else player.vy=0;
+    if(!moved)return;
+    player.step+=dt*(5.5+player.speedRatio*8.5);
+    const footstepCycle=Math.floor(player.step/Math.PI);
+    if(footstepCycle!==player.footstepCycle){player.footstepCycle=footstepCycle;emitFootstep();audio.sfx("step");}
+  }
+
+  function lookAround(){
+    if(scanCooldown>0){toast(`Radar bude připraven za ${scanCooldown.toFixed(1).replace(".",",")} s`,"",700);return;}
+    const radius=260+state.perks.scanner*55;
+    // Radar should keep the search flowing: a short base cooldown prevents spam,
+    // while the scanner perk still rewards investment without making early levels sluggish.
+    scanPulse=.01;scanCooldown=Math.max(1.1,2-state.perks.scanner*.3);audio.sfx("scan");state.heat=clamp(state.heat+1.5,0,100);
+    let count=0;
+    for(const h of world.hotspots){if(h.active&&dist(player,h)<=radius){h.revealed=true;h.ttl=9;world.radarPings.push({x:h.x,y:h.y,life:.62,maxLife:.62,kind:"profile"});count++;}}
+    for(const item of world.items){if(item.active&&item.hidden&&dist(player,item)<=radius){item.hidden=false;world.radarPings.push({x:item.x,y:item.y,life:.62,maxLife:.62,kind:"stone"});count++;}}
+    toast(count?`Radar odhalil ${count} ${count===1?"nález":count>=2&&count<=4?"nálezy":"nálezů"}`:"Radar tady nic nezachytil",count?"good":"",900);
+    if(count)save();
+  }
+
+  function performAction(){
+    if(mode!=="playing"||theftAlertShown)return;
+    const franta=world?.id==="malse"&&world.rival?.active&&world.rival.name==="franta"?world.rival:null;
+    if(franta&&dist(player,franta)<=140){nearest={kind:"rival",ref:franta,x:franta.x,y:franta.y};hitRival();return;}
+    findNearest();
+    if(nearest){
+      if(nearest.kind==="npc")talkNpc(nearest.ref);
+      else if(nearest.kind==="hotspot")startDig(nearest.ref);
+      else if(nearest.kind==="item")interactItem(nearest.ref);
+      else if(nearest.kind==="hole")fillHole(nearest.ref);
+      else if(nearest.kind==="rival")hitRival();
+      else if(nearest.kind==="exit")tryExit();
+    }else lookAround();
+  }
+
+  function talkNpc(npc){
+    if(world.id==="chlum"){showDialog("Václav","V","Bouřka vyplavila pár kusů přímo do brázd. Když si nálezy zapíšeš k tomuhle poli, bude jejich původ doložený.",()=>{if(!world.runtime.provenanceConfirmed){world.runtime.provenanceConfirmed=true;world.items.filter(item=>item.type==="stone").forEach(item=>item.documented=true);state.stones.filter(stone=>stone.locality==="Chlum").forEach(stone=>stone.documented=true);toast("Původ chlumských nálezů je doložený","good",1900);save();}});return;}
+    if(world.id==="nesmen"&&!world.runtime.permit){showDialog("Lesník","L","Můžeš do tří vyznačených profilů. Každý po prohlédnutí zase zahrab.",()=>{world.runtime.permit=true;npc.used=true;toast("Lesník ti dovolil kopat","good");save();});return;}
+    if(npc.role==="farmer"){showDialog(npc.name,npc.avatar,"Po bouřce bývají nejlepší kusy přímo v brázdách. Koukej pořádně.");return;}
+    if(npc.role==="owner"){showDialog(npc.name,npc.avatar,"Hlavně po sobě každý profil zase zahrab.");return;}
+  }
+  function showDialog(name,avatar,text,callback=null){mode="dialog";setPlaying(false);$("dialogName").textContent=name.toUpperCase();$("dialogAvatar").textContent=avatar;$("dialogText").textContent=text;dialogueCallback=callback;showOnly(screens.dialog);}
+  function closeDialog(){dialogueCallback?.();dialogueCallback=null;mode="playing";setPlaying(true);showOnly(null);updateHUD(true);}
+  function openFraudReview(){
+    if(!world||world.id!=="malse"||world.runtime.papers<3)return;
+    mode="fraud";setPlaying(false);
+    $("fraudFeedback").textContent="Posuď všechny tři indicie dohromady. Jedna nesrovnalost sama nestačí.";
+    $("fraudFeedback").className="fraud-feedback";
+    showOnly(screens.fraud);
+  }
+  function resolveFraudReview(isFraud){
+    if(mode!=="fraud"||!world||world.id!=="malse")return;
+    const r=world.runtime;
+    if(!isFraud){
+      r.fraudAttempts=(r.fraudAttempts||0)+1;
+      $("fraudFeedback").textContent="To nesedí. Povrch se opakuje, fotografie má jiný tvar a záznam původu časově nesouhlasí. Posuď všechny tři nesrovnalosti společně.";
+      $("fraudFeedback").className="fraud-feedback bad";audio.sfx("bad");save();return;
+    }
+    r.fraudResolved=true;state.stats.fraud=1;state.score+=650;
+    mode="playing";showOnly(null);setPlaying(true);startRival("franta",1260,430);updateHUD(true);save();
+  }
+
+  function configureDigScreen(kind,target){
+    const filling=kind==="fill";
+    digKind=kind;digHolding=false;digFinishDelay=0;digHits=0;digInputLockUntil=0;currentDig=target;
+    digMarker=filling ? .06 : rand(.08,.92);digDir=1;digSpeed=filling ? .9 : 1.25;digTimeLeft=filling ? 8 : 7;digZoneCenter=filling ? rand(.58,.72) : .5;
+    mode="dig";setPlaying(false);
+    const card=$("digScreen");
+    card.querySelector(".eyebrow").textContent=filling?"ZAHRABÁVÁNÍ":"KOPÁNÍ";
+    $("digTitle").textContent=filling?"Zahrabání díry":target.special==="hedgehog"?"Ježkový profil":"Kopání profilu";
+    $("digInfo").textContent=filling?"Stiskni a drž. Pusť tlačítko, když je ukazatel v zeleném poli.":"Tref tři přesné údery. Klepni nebo stiskni mezerník v zeleném poli.";
+    card.querySelector(".dig-meter-label").textContent=filling?"PŘENOS HLÍNY":"RYTMUS ÚDERU";
+    $("digButton").textContent=filling?"DRŽ A PUSŤ":"ÚDER!";
+    $("digHits").textContent="◇ ◇ ◇";
+    setDigFeedback(filling?"Stiskni a drž tlačítko":"Čekám na první úder");
+    updateDigZone();$("digTimerFill").style.transform="scaleX(1)";showOnly(screens.dig);
+  }
+
+  function startDig(h){
+    if(!h.active||world.id==="chlum")return;
+    if(world.id==="nesmen"&&!world.runtime.permit){toast("Nejdřív získej souhlas lesníka","bad",1200);return;}
+    if(world.id==="nesmen"&&(world.runtime.open||0)>0){toast("Nejdřív zahrab otevřený profil","bad",1200);return;}
+    configureDigScreen("dig",h);
+  }
+
+  function startFill(hole){
+    if(!hole||!hole.active)return;
+    configureDigScreen("fill",hole);
+  }
+  function setDigFeedback(text,tone=""){$("digFeedback").textContent=text;$("digFeedback").className=`dig-feedback ${tone}`.trim();}
+  function digZoneWidth(){return digKind==="fill"?.22:.26+state.perks.shovel*.055;}
+  function updateDigZone(){const width=digZoneWidth();digZoneCenter=clamp(digZoneCenter,width/2+.04,1-width/2-.04);$("sweetZone").style.left=`${(digZoneCenter-width/2)*100}%`;$("sweetZone").style.width=`${width*100}%`;}
+  function digPress(){
+    if(mode!=="dig"||digFinishDelay>0)return;
+    if(digKind==="fill"){
+      if(digHolding)return;
+      digHolding=true;
+      setDigFeedback("Drž… pusť v zeleném poli");
+      return;
+    }
+    digAttempt();
+  }
+
+  function digRelease(){
+    if(mode!=="dig"||digKind!=="fill"||!digHolding||digFinishDelay>0)return;
+    digHolding=false;
+    const width=digZoneWidth();
+    const good=Math.abs(digMarker-digZoneCenter)<=width/2;
+    if(good){
+      digHits++;
+      digTimeLeft=Math.min(8,digTimeLeft+.35);
+      audio.sfx("impactWet");haptic([12,24,14]);shake=Math.max(shake,2);
+      $("digHits").textContent=[0,1,2].map(i=>i<digHits?"◆":"◇").join(" ");
+      setDigFeedback(`Zásyp profilu · ${digHits}/3`,"good");
+      const card=$("digScreen").querySelector(".dig-card");card.classList.remove("hit");void card.offsetWidth;card.classList.add("hit");
+      if(digHits>=3){digFinishDelay=.35;return;}
+    }else{
+      state.stats.misses++;
+      digTimeLeft=Math.max(0,digTimeLeft-.8);
+      audio.sfx("bad");haptic([24,28,20]);shake=Math.max(shake,4);
+      setDigFeedback("Hlína spadla vedle. Naber ji znovu.","bad");
+    }
+    digMarker=.06;digZoneCenter=rand(.58,.74);updateDigZone();
+  }
+
+  function digAttempt(){
+    const now=performance.now();if(mode!=="dig"||digKind!=="dig"||digFinishDelay>0||now<digInputLockUntil)return;digInputLockUntil=now+110;audio.sfx("dig");const width=digZoneWidth();const good=Math.abs(digMarker-digZoneCenter)<=width/2;
+    if(good){
+      shake=Math.max(shake,3);digHits++;digTimeLeft=Math.min(7,digTimeLeft+.5);digSpeed+=.28;digDir*=-1;audio.sfx("perfect");haptic([12,28,16]);$("digHits").textContent=[0,1,2].map(i=>i<digHits?"◆":"◇").join(" ");setDigFeedback(`Přesně · tempo ${digHits}/3 · +0,5 s`,"good");
+      const card=$("digScreen").querySelector(".dig-card");card.classList.remove("hit");void card.offsetWidth;card.classList.add("hit");
+      digZoneCenter=rand(.28,.72);updateDigZone();if(digHits>=3)digFinishDelay=.35;
+    }else{
+      shake=Math.max(shake,6);flash=.1;flashColor="255,105,96";digTimeLeft=Math.max(.3,digTimeLeft-.6);state.stats.misses++;state.heat=clamp(state.heat+Math.max(3,7-state.perks.quiet*1.5),0,100);audio.sfx("bad");haptic([28,35,28]);setDigFeedback("Vedle · −0,6 s · sleduj zelené pole","bad");toast("Vedle – drž rytmus!","bad",520);
+    }
+  }
+  function failDig(){
+    if(mode!=="dig")return;
+    const filling=digKind==="fill";
+    currentDig=null;digHolding=false;mode="playing";setPlaying(true);showOnly(null);
+    if(!filling)state.heat=clamp(state.heat+4,0,100);
+    audio.sfx("bad");
+    toast(filling?"Zahrabání se nepovedlo – zkus to znovu":"Rytmus se rozpadl – zkus profil znovu","bad",1100);
+    findNearest();updateHUD(true);save();
+  }
+  function finishDig(){
+    if(mode!=="dig"||digKind!=="dig"||!currentDig||!currentDig.active)return;const h=currentDig;h.active=false;state.stats.digs++;mode="playing";setPlaying(true);showOnly(null);
+    if(h.needsFill){
+      world.runtime.dug++;
+      world.runtime.open=(world.runtime.open||0)+1;
+      const hole={type:"hole",x:h.x,y:h.y,r:46,w:h.w||74,h:h.h||42,angle:h.angle||0,active:true};
+      world.items.push(hole);
+      nearest={kind:"hole",ref:hole,x:hole.x,y:hole.y};
+      toast("Profil je otevřený. Teď ho zahrab.","bad",1700);
+    }
+    if(h.special==="hedgehog"){
+      world.runtime.hedgehog=true;world.runtime.chaseStarted=true;showTheftAlert();
+      world.runtime.pendingBoss={x:h.x+150,y:h.y-90};
+      audio.sfx("rare");
+    }else{
+      const stone=makeStone(LEVELS[state.levelIndex].name,h.rarity||"common",h.documented===true);addStone(stone,h.x,h.y);
+      if(world.id==="chlum")world.runtime.collected++;
+    }
+    currentDig=null;findNearest();updateHUD(true);save();
+  }
+
+  function makeStone(locality,rarity="common",documented=false,qualityBonus=0){
+    const bases={common:[.5,1.8],good:[1.5,3.8],rare:[3.2,7.2],hedgehog:[5.5,10.5]};const b=bases[rarity]||bases.common;
+    const weight=+rand(b[0],b[1]).toFixed(2);const quality=clamp(Math.round(rand(58,92)+qualityBonus+state.perks.eye*2),45,100);
+    const size=weight<1.2?"drobný":weight<3.2?"střední":weight<6.5?"velký":"mimořádný";
+    const qualityLabel=quality>=88?"výstavní":quality>=74?"pěkný":quality>=60?"dobrý":"surový";
+    const names={common:`${size[0].toUpperCase()+size.slice(1)} vltavín`,good:`${size[0].toUpperCase()+size.slice(1)} kapka`,rare:"Výstavní celotvar",hedgehog:"Besednický ježek"};
+    return{id:`s${Date.now()}${Math.random()}`,locality,rarity,weight,quality,size,qualityLabel,documented:Boolean(documented),certified:false,name:names[rarity],value:Math.round(weight*(rarity==="hedgehog"?4200:rarity==="rare"?1900:rarity==="good"?900:420)*(quality/75))};
+  }
+  function addStone(stone,x=player.x,y=player.y){
+    const usedIds=new Set(state.stones.map(existing=>existing.id));
+    const baseId=typeof stone.id==="string"&&stone.id?stone.id:`s${Date.now()}`;
+    let uniqueId=baseId,suffix=2;while(usedIds.has(uniqueId))uniqueId=`${baseId}-${suffix++}`;stone.id=uniqueId;
+    state.stones.push(stone);state.stats.rare+=stone.rarity==="rare"||stone.rarity==="hedgehog"?1:0;
+    const mult=stone.rarity==="hedgehog"?6:stone.rarity==="rare"?3:stone.rarity==="good"?1.6:1;state.score+=Math.round(stone.value*.18*state.combo*mult);
+    boostCombo(stone.rarity==="rare"||stone.rarity==="hedgehog"?2:1);burst(x,y,stone.rarity==="rare"||stone.rarity==="hedgehog"?"#f2cb72":"#63e49b",stone.rarity==="hedgehog"?28:15);
+    if(stone.rarity==="rare"||stone.rarity==="hedgehog"){shake=Math.max(shake,6);flash=.16;flashColor="242,203,114";haptic([20,35,30]);}audio.sfx(stone.rarity==="rare"||stone.rarity==="hedgehog"?"rare":"good");toast(`${stone.name} · ${stone.weight.toFixed(2)} g`,stone.rarity==="rare"||stone.rarity==="hedgehog"?"rare":"good",1300);
+  }
+  function boostCombo(amount=1){state.combo=clamp(state.combo+amount,1,6);state.comboTimer=12;}
+  function breakCombo(){state.combo=1;state.comboTimer=0;}
+
+  function interactItem(item){
+    if(!item.active)return;
+    if(item.type==="stone"){
+      item.active=false;const documented=world.id==="chlum"?Boolean(world.runtime.provenanceConfirmed):item.documented===true;const stone=makeStone(LEVELS[state.levelIndex].name,item.rarity||"common",documented);addStone(stone,item.x,item.y);if(world.id==="chlum")world.runtime.collected++;save();return;
+    }
+    if(item.type==="sample"){currentSample=item;mode="identify";setPlaying(false);$("sampleTitle").textContent=item.sample.title;$("sampleDescription").textContent=`${item.sample.text} Posuď povrch, tvar a pravidelnost vzorku.`;$("sampleGem").style.color=item.sample.real?"#70d999":"#33f48b";showOnly(screens.identify);return;}
+    if(item.type==="clue"){
+      item.active=false;world.runtime.clues++;audio.sfx("paper");boostCombo();
+      const clueText=["První stopa: vede k hlavnímu profilu.","Druhá stopa: ježková vrstva je blízko.","Třetí stopa: máš přesné místo profilu."][world.runtime.clues-1]||`Stopa: ${item.label}`;
+      toast(clueText,"good",1500);
+      if(world.runtime.clues>=3){addHotspot(980,520,{rarity:"hedgehog",documented:true,special:"hedgehog",revealed:true,marked:true});toast("JEŽKOVÝ PROFIL ODHALEN · DOJDI K NĚMU A KOPEJ","rare",2200);}save();return;
+    }
+    if(item.type==="paper"){
+      if(world.id==="malse"&&item.special==="certificate"){
+        const certifiedIds=certifiedStoneIds();
+        const itemIds=Array.isArray(item.stoneIds)?[...new Set(item.stoneIds.filter(id=>certifiedIds.includes(id)))]:[];
+        item.active=false;world.runtime.certificateRecovered=true;world.runtime.certificateStoneIds=[...certifiedIds];
+        world.runtime.recoveredCertificateStoneIds=itemIds.length===certifiedIds.length?[...certifiedIds]:itemIds;
+        audio.sfx("paper");boostCombo();state.score+=180;
+        toast("Složku s certifikáty máš zpět. Teď můžeš zaregistrovat sbírku.","rare",2200);updateHUD(true);save();return;
+      }
+      if(world.id==="malse"&&!world.runtime.registered){toast("Nejdřív zaregistruj sbírku u vstupu","bad",1500);return;}
+      item.active=false;world.runtime.papers++;audio.sfx("paper");boostCombo();
+      const clues=["Povrch: na dvou místech se opakuje stejný reliéf.","Fotografie: tvar na snímku neodpovídá předloženému vzorku.","Záznam: čas nálezu nesedí s údaji z lokality."];
+      toast(world.id==="malse"?(clues[world.runtime.papers-1]||`Prověřeno: ${item.label}`):`Nalezena: ${item.label}`,"good",1900);
+      if(world.id==="malse"&&world.runtime.papers>=3)toast("Máš všechny indicie. Vrať se ke vstupu a prověř Frantův vzorek.","rare",2200);
+      save();return;
+    }
+  }
+  function resolveSample(choice){
+    if(!currentSample)return;const correct=choice===currentSample.sample.real;currentSample.active=!correct;currentSample.hidden=!correct;world.runtime.identified++;mode="playing";setPlaying(true);showOnly(null);
+    if(correct){world.runtime.correct++;state.stats.correct++;boostCombo();state.score+=220*state.combo;audio.sfx("good");toast("Správně","good");if(currentSample.sample.real){world.runtime.real++;addStone(makeStone("Ločenice",Math.random()<.2?"good":"common",true,state.perks.eye*3),currentSample.x,currentSample.y);}}
+    else{state.heat=clamp(state.heat+12-state.perks.quiet*2,0,100);breakCombo();audio.sfx("bad");toast("Špatné určení · vzorek zůstává na místě. Znovu ho vyhledej radarem.","bad",2600);}
+    currentSample=null;updateHUD(true);save();
+  }
+
+  function fillHole(hole){
+    startFill(hole);
+  }
+
+  function finishFillHole(){
+    if(mode!=="dig"||digKind!=="fill"||!currentDig||!currentDig.active)return;
+    const hole=currentDig;
+    hole.active=false;
+    world.runtime.filled++;state.stats.filled=(state.stats.filled||0)+1;
+    world.runtime.open=Math.max(0,(world.runtime.open||0)-1);
+    state.score+=160*state.combo;
+    boostCombo();
+    audio.sfx("impactWet");
+    burst(hole.x,hole.y,"#9a744c",12);
+    mode="playing";setPlaying(true);showOnly(null);
+    currentDig=null;digHolding=false;nearest=null;
+    toast("Profil zahrabán","good");
+    findNearest();updateHUD(true);save();
+  }
+
+  function startRival(name,x,y){
+    world.runtime.bossStarted=true;
+    const isKarel=name==="karel";
+    if(!isKarel&&world.id==="malse"){
+      world.runtime.bossDefeated=false;world.runtime.dossierRecovered=false;world.runtime.frantaEscaped=false;state.stats.dossier=0;
+    }
+    world.rival={name,displayName:isKarel?"KAREL":"FRANTA",x,y,r:30,hits:0,maxHits:isKarel?3:1,speed:isKarel?150:142,baseSpeed:isKarel?150:142,angle:0,facing:1,pose:"front",moving:false,motionRatio:0,motionPhase:0,distanceTravelled:0,target:isKarel?{x:rand(250,1550),y:rand(220,950)}:{x:1650,y:980},escapeTarget:isKarel?null:{x:1650,y:980},throwTimer:1.15,active:true,flashlight:isKarel,vision:isKarel?245:0,baseVision:isKarel?245:0,halfAngle:isKarel?.5:0,seesPlayer:false,phase:1,hitFlash:0,dashTimer:1.8,dashTime:0,stunTimer:0,graceTimer:isKarel?1.15:.65,trail:[]};
+    bossIntroTimer=2.35;
+    if(ui.bossIntroName)ui.bossIntroName.textContent=isKarel?"KAREL":"FRANTA";
+    if(ui.bossIntroText)ui.bossIntroText.textContent=isKarel?"Karel ti sebral ježka a utíká. Po sprintu se na chvíli zastaví — tehdy ho chyť.":"Franta popadne kontrolní složku s podklady k jeho vzorku a vyráží k východu. Dostihni ho a zastav ho.";
+    ui.bossIntro?.classList.remove("hidden");ui.bossIntro?.classList.add("show");
+    audio.sfx("boss");haptic([35,40,35]);shake=Math.max(shake,7);flash=.1;flashColor="190,100,75";
+    toast(isKarel?"Karel utíká s ježkem!":"FRANTA UTÍKÁ S KONTROLNÍMI PODKLADY · ZASTAV HO!","bad",2100);
+  }
+  function hitRival(){
+    const r=world.rival;if(!r||!r.active)return;
+    if(r.name==="franta"){
+      r.hits=1;r.active=false;r.hitFlash=.28;world.runtime.bossDefeated=true;world.runtime.dossierRecovered=true;world.runtime.frantaEscaped=false;state.stats.dossier=1;state.score+=1200;
+      ui.bossHud?.classList.add("hidden");audio.sfx("catch");burst(r.x,r.y,"#ff8a72",22);shake=Math.max(shake,7);
+      toast("Kontrolní podklady máš zpět. Vstup do výstavního sálu je volný.","rare",1900);updateHUD(true);save();return;
+    }
+    if(r.stunTimer<=0){toast("Je příliš rychlý · počkej na jeho zastavení","bad",950);return;}
+    r.hits++;r.stunTimer=0;r.hitFlash=.28;r.phase=Math.min(3,r.hits+1);audio.sfx("catch");burst(r.x,r.y,"#ff8a72",22);shake=Math.max(shake,7);
+    r.speed=r.baseSpeed*(1+r.hits*.16);if(r.flashlight){r.vision=r.baseVision+r.hits*34;r.halfAngle=.5+r.hits*.08;}
+    r.throwTimer=Math.max(.55,1.12-r.hits*.17);r.target={x:rand(180,1620),y:rand(160,1020)};
+    if(r.hits>=r.maxHits){r.active=false;world.runtime.bossDefeated=true;state.stats.rare++;ui.bossHud?.classList.add("hidden");addStone(makeStone("Besednice","hedgehog",true,8),r.x,r.y);}
+    else toast(`Chycení ${r.hits}/${r.maxHits} · Karel zrychluje`,"good",1100);
+    updateHUD(true);save();
+  }
+
+  function tryExit(){
+    if(world?.id==="malse"){
+      const r=world.runtime;
+      if(!r.certificateRecovered){toast("Nejdřív radarem najdi složku s certifikáty u nábřeží.","bad",1700);return;}
+      if(!r.registered){
+        if(!state.expertiseCompleted){toast("Registrace vyžaduje dokončenou Expertizu.","bad",1900);return;}
+        const certifiedIds=certifiedStoneIds();
+        const recoveredIds=Array.isArray(r.recoveredCertificateStoneIds)?[...new Set(r.recoveredCertificateStoneIds.filter(id=>certifiedIds.includes(id)))]:[];
+        const certificatesMatch=certifiedIds.length===recoveredIds.length&&certifiedIds.every(id=>recoveredIds.includes(id));
+        if(certifiedIds.length&&!certificatesMatch){toast("Nalezená složka neodpovídá certifikovaným kamenům z Expertizy.","bad",2200);return;}
+        const certifiedCount=certifiedIds.length;
+        const registrationText=certifiedCount
+          ?`Certifikáty sedí s ${certifiedCount} ${certifiedCount===1?"vybraným kusem":"vybranými kusy"}. Sbírku můžeme přihlásit k výstavě. Ještě než půjdeš do sálu, potřeboval bych tvůj názor na jeden Frantův vzorek. Něco na něm nesedí.`
+          :"Ve složce není žádný soutěžní kámen. Výpravu můžeš dokončit mimo soutěž, aby se starý nebo poškozený save nezablokoval. Ještě prověř Frantův vzorek.";
+        showDialog("Pořadatel","P",registrationText,()=>{
+          r.registered=true;state.score+=250;toast(certifiedCount?"Certifikované kusy zaregistrovány · prověř Frantův vzorek":"Registrace mimo soutěž · prověř Frantův vzorek","good",1900);save();
+        });
+        return;
+      }
+      if(r.papers<3){toast(levelGoal(),"bad");return;}
+      if(!r.fraudResolved){openFraudReview();return;}
+      if(!r.bossDefeated){toast("Franta utíká s kontrolními podklady. Dostihni ho a použij akci.","bad",1600);return;}
+    }
+    if(!goalComplete()){toast(levelGoal(),"bad");return;}
+    finishLevel();
+  }
+  function finishLevel(){
+    mode="transition";setPlaying(false);
+    if(!state.pendingTransition){
+      state.score+=700+state.combo*120;
+      state.pendingTransition=state.levelIndex>=LEVELS.length-1?"jury":state.levelIndex===3?"expertise":"perk";
+      save();
+    }
+    if(state.pendingTransition==="jury"){showJury();return;}
+    if(state.pendingTransition==="expertise"){showExpertise();return;}
+    showPerks();
+  }
+  function showPerks(){
+    mode="transition";setPlaying(false);
+    const available=PERKS.filter(p=>(state.perks[p.id]||0)<p.max);
+    const desired=Math.min(3,available.length);
+    let candidates=(state.pendingPerks||[]).map(id=>available.find(perk=>perk.id===id)).filter(Boolean);
+    if(candidates.length!==desired){
+      candidates=[...available].sort(()=>Math.random()-.5).slice(0,desired);
+      state.pendingPerks=candidates.map(perk=>perk.id);
+      save();
+    }
+    const list=$("perkList");list.innerHTML="";
+    candidates.forEach(p=>{const b=document.createElement("button");b.type="button";b.className="perk-option";b.innerHTML=`<b>${p.icon}</b><span><strong>${p.name}</strong><small>${p.text}</small></span>`;b.addEventListener("click",()=>{audio.sfx("click");state.perks[p.id]++;state.levelIndex++;state.pendingPerks=[];state.pendingTransition=null;world=null;restoredWorld=false;save();showBrief(state.levelIndex);});list.append(b);});
+    showOnly(screens.perk);
+  }
+
+  function stoneMeta(s,{includeCertificate=false}={}){
+    const size=s.size||(s.weight<1.2?"drobný":s.weight<3.2?"střední":s.weight<6.5?"velký":"mimořádný");
+    const qualityLabel=s.qualityLabel||(s.quality>=88?"výstavní":s.quality>=74?"pěkný":s.quality>=60?"dobrý":"surový");
+    return `${escapeHtml(s.locality)} · ${size} · stav: ${qualityLabel} · ${s.quality} % · ${s.documented?"PŮVOD DOLOŽENÝ":"PŮVOD NEDOLOŽENÝ"}${includeCertificate?` · ${s.certified?"CERTIFIKOVÁN":"NECERTIFIKOVÁN"}`:""}`;
+  }
+
+  function showExpertise(){
+    mode="expertise";setPlaying(false);audio.setTheme(LEVELS[4].music);expertiseSelection.clear();
+    const ordered=rankStonesForExpertise();
+    const limit=Math.min(5,ordered.length);
+    const pending=(state.pendingCertification||[]).map(id=>ordered.find(stone=>stone.id===id)).filter(Boolean).slice(0,limit);
+    const existing=ordered.filter(stone=>stone.certified).slice(0,limit);
+    const initial=pending.length?pending:existing.length?existing:ordered.slice(0,limit);
+    initial.forEach(stone=>expertiseSelection.add(stone.id));
+    state.pendingCertification=[...expertiseSelection];save();
+    const list=$("expertiseList");list.innerHTML="";
+    const button=$("expertiseButton");
+    const refreshControls=()=>{
+      $("expertiseCount").textContent=`${expertiseSelection.size} / max. ${limit}`;
+      button.disabled=limit>0&&expertiseSelection.size===0;
+      button.textContent=limit===0?"POKRAČOVAT BEZ VITRÍNY":expertiseSelection.size===1?"PŘEVZÍT CERTIFIKÁT":"PŘEVZÍT CERTIFIKÁTY";
+    };
+    $("expertiseTitle").textContent=limit>0?(ordered.length>5?"Vyber až pět kusů k certifikaci":"Odborné posouzení"):"Expertiza bez vzorků";
+    $("expertiseText").textContent=limit===0
+      ?"V uložené výpravě nejsou žádné kameny. Hru můžeš dokončit bez soutěžní vitríny, aby se starý nebo poškozený save nezablokoval."
+      :ordered.length>5
+        ?"Odborník může před cestou do Slávie certifikovat jeden až pět konkrétních kusů. Vyber kandidáty; jejich doložený původ zůstává samostatně hodnocený porotou."
+        :limit===1
+          ?"Odborník posoudí tvůj jediný kus a vystaví k němu konkrétní certifikát. Doložený původ je samostatná vlastnost."
+          :`Odborník může certifikovat všech ${limit} dostupných kusů. Kterýkoli můžeš z výběru vyřadit, ale pro soutěž musí zůstat alespoň jeden. Doložený původ je samostatná vlastnost.`;
+    ordered.forEach(s=>{
+      const b=document.createElement("button");b.type="button";b.className="stone-card expertise-stone";
+      const selected=()=>expertiseSelection.has(s.id);
+      const refreshCard=()=>{b.classList.toggle("selected",selected());const status=b.querySelector(".expertise-status");if(status)status.textContent=selected()?"VYBRÁN K CERTIFIKACI":"NEVYBRÁN";};
+      b.innerHTML=`<span>◆</span><div><strong>${escapeHtml(s.name)}</strong><small>${stoneMeta(s,{includeCertificate:true})} · <b class="expertise-status"></b></small></div>`;
+      refreshCard();
+      b.addEventListener("click",()=>{
+        if(selected())expertiseSelection.delete(s.id);
+        else if(expertiseSelection.size<limit)expertiseSelection.add(s.id);
+        refreshCard();state.pendingCertification=[...expertiseSelection];save();refreshControls();
+      });
+      list.append(b);
+    });
+    refreshControls();
+    showOnly(screens.expertise);
+  }
+  function finishExpertise(){
+    if(state.pendingTransition!=="expertise")return;
+    const limit=Math.min(5,state.stones.length);
+    if(limit>0&&(expertiseSelection.size===0||expertiseSelection.size>limit))return;
+    state.stones.forEach(stone=>stone.certified=expertiseSelection.has(stone.id));
+    state.pendingCertification=[];
+    state.expertiseCompleted=true;
+    audio.sfx("click");
+    if(state.levelIndex===3){state.pendingTransition="perk";state.pendingPerks=[];save();showPerks();return;}
+    state.pendingTransition=null;save();showBrief(4);
+  }
+
+  function showJury(){mode="jury";jurySelection.clear();setPlaying(false);const list=$("juryList");list.innerHTML="";
+    const eligible=state.stones.filter(stone=>stone.certified);
+    const target=Math.min(3,eligible.length);
+    $("juryTitle").textContent=target===3?"Vyber tři certifikované kameny do vitríny":target===2?"Vyber dva certifikované kameny do vitríny":target===1?"Vyber certifikovaný kámen do vitríny":"Prázdná vitrína";
+    [...eligible].sort((a,b)=>b.quality-a.quality||Number(b.documented)-Number(a.documented)||b.value-a.value).forEach(s=>{
+      const b=document.createElement("button");b.type="button";b.className="stone-card";
+      b.innerHTML=`<span>◆</span><div><strong>${escapeHtml(s.name)}</strong><small>${stoneMeta(s,{includeCertificate:true})}</small></div>`;
+      b.addEventListener("click",()=>{if(jurySelection.has(s.id)){jurySelection.delete(s.id);b.classList.remove("selected");}else if(jurySelection.size<target){jurySelection.add(s.id);b.classList.add("selected");}$("juryCount").textContent=`${jurySelection.size} / ${target}`;$("juryButton").disabled=target>0&&jurySelection.size!==target;});list.append(b);
+    });
+    $("juryDescription").textContent=target?`Vyber ${target===1?"jeden kámen":target===2?"dva kameny":"tři kameny"} z certifikovaných kusů. Porota hodnotí stav, doložený původ a pestrost lokalit; samotná hmotnost body nepřidává.`:"V tomto save není žádný certifikovaný kámen. Výpravu lze dokončit mimo soutěž, ale vitrína zůstane prázdná.";
+    $("juryCount").textContent=`0 / ${target}`;$("juryButton").disabled=target>0;$("juryButton").textContent=target?"POSTAVIT VITRÍNU":"PŘEDSTOUPIT PŘED POROTU";showOnly(screens.jury);
+  }
+  function submitJury(){
+    if(mode!=="jury")return;
+    const button=$("juryButton");
+    button.disabled=true;
+    button.textContent="POROTA PŘICHÁZÍ";
+    for(const card of document.querySelectorAll("#juryList .stone-card"))card.disabled=true;
+    $("juryDescription").textContent="Vitrína je připravená. Porota přichází.";
+    audio.sfx("click");
+    setTimeout(()=>{if(mode==="jury")judge();},900);
+  }
+  function judge(){
+    const chosen=state.stones.filter(s=>jurySelection.has(s.id));
+    const quality=chosen.reduce((sum,s)=>sum+s.quality*28,0);
+    const provenance=chosen.filter(s=>s.documented).length*950;
+    const diversity=new Set(chosen.map(s=>s.locality)).size*700;
+    const rarity=chosen.reduce((sum,s)=>sum+(s.rarity==="hedgehog"?2200:s.rarity==="rare"?1100:s.rarity==="good"?400:120),0);
+    const stewardship=Math.max(0,1800-state.caught*180)+(state.stats.filled||0)*220;
+    const finale=(state.stats.fraud||0)*900+(state.stats.dossier||0)*650;
+    const journey=Math.min(state.score,7000)*.22;
+    const jury=Math.round(1200+quality+provenance+diversity+rarity+stewardship+finale+journey);
+    let title="Výprava dokončena",text="Došel jsi až do Slávie a výpravu dokončil. Porota ocenila doložený původ a férový průběh, ale vitrína tentokrát na hlavní ocenění nestačila.";
+    if(jury>=JURY_MAIN_PRIZE_SCORE){title="Hlavní cena poroty";text="Porota ocenila kvalitu sbírky, její pestrost i způsob, jakým ses k nejlepším kusům během výpravy dostal.";}
+    else if(jury>=JURY_RECOGNITION_SCORE){title="Výstavní uznání";text="Sbírka zaujala stavem, doloženým původem a pestrostí lokalit. Hmotnost sama o sobě o výsledku nerozhodla.";}
+    state.score=jury;addRecord(jury,title);storage.remove(SAVE_KEY);audio.sfx("win");
+    $("resultTitle").textContent=title;$("resultScore").textContent=jury.toLocaleString("cs-CZ");$("resultText").textContent=text;
+    $("resultStats").innerHTML=`<div><span>STAV</span><strong>${Math.round(quality)}</strong></div><div><span>PŮVOD</span><strong>${Math.round(provenance)}</strong></div><div><span>PESTROST</span><strong>${Math.round(diversity)}</strong></div><div><span>FÉROVOST</span><strong>${Math.round(stewardship+finale)}</strong></div>`;mode="result";showOnly(screens.result);
+  }
+
+  function caught(reason){
+    if(player.invuln>0)return;dangerActive=false;dangerExposure=0;dangerWarned=false;player.invuln=2;shake=12;flash=.22;flashColor="255,90,80";state.caught++;state.heat=20;breakCombo();audio.sfx("catch");
+    let lost=null;const vulnerable=state.stones.filter(stone=>!stone.certified&&stone.rarity!=="hedgehog");if(vulnerable.length){const sorted=[...vulnerable].sort((a,b)=>a.value-b.value);lost=state.perks.case>0&&sorted.length>1?sorted[0]:pick(sorted.slice(0,Math.min(2,sorted.length)));state.stones=state.stones.filter(s=>s.id!==lost.id);}
+    player.x=world.id==="malse"?720:world.id==="chlum"?360:world.id==="nesmen"?360:170;player.y=world.id==="malse"?1060:world.id==="chlum"?1070:world.id==="nesmen"?1050:1030;stopPlayerMotion();toast(`${reason}${lost?` · ztracen ${lost.name}`:""}`,"bad",1800);updateHUD(true);save();
+  }
+
+  function angleDistance(a,b){return Math.abs(Math.atan2(Math.sin(a-b),Math.cos(a-b)));}
+  function insideVisionCone(observer,vision,halfAngle=.57){
+    if(!observer||!vision)return false;
+    const vx=player.x-observer.x,vy=player.y-observer.y;
+    const distance=Math.hypot(vx,vy);
+    if(distance>vision+player.r)return false;
+    if(distance<1)return true;
+    return angleDistance(Math.atan2(vy,vx),observer.angle)<=halfAngle;
+  }
+  function markDanger(source,rate=42,catchAfter=2.25){
+    dangerActive=true;
+    dangerSource=source;
+    dangerRate=Math.max(dangerRate,rate);
+    dangerCatchAfter=Math.min(dangerCatchAfter,catchAfter);
+  }
+  function resolveDanger(dt){
+    if(dangerActive){
+      dangerExposure+=dt;
+      state.heat=clamp(state.heat+dangerRate*dt,0,100);
+      if(!dangerWarned){dangerWarned=true;audio.sfx("alert");haptic(22);toast(`${dangerSource}: jsi ve světle!`,"bad",900);}
+      if(dangerExposure>=dangerCatchAfter){caught(`${dangerSource} tě odhalil`);}
+    }else{
+      dangerExposure=Math.max(0,dangerExposure-dt*2.8);
+      state.heat=Math.max(0,state.heat-dt*4.2);
+      if(dangerExposure<=.05)dangerWarned=false;
+    }
+  }
+
+  function update(dt,elapsed=dt){
+    if(document.hidden)return;
+    audio.update(dt,mode==="playing");
+    if(mode==="playing"||mode==="dig"){
+      shake=Math.max(0,shake-dt*24);flash=Math.max(0,flash-dt*.9);
+    }
+    if(mode==="dig"){
+      if(digFinishDelay>0){
+        digFinishDelay=Math.max(0,digFinishDelay-dt);
+        if(digFinishDelay===0){if(digKind==="fill")finishFillHole();else finishDig();}
+        return;
+      }
+      const width=digZoneWidth(),meter=$("digMeter");
+      if(digKind==="fill"){
+        if(digHolding){
+          digMarker=Math.min(1,digMarker+dt*digSpeed);
+          digTimeLeft=Math.max(0,digTimeLeft-dt);
+        }
+        const inZone=Math.abs(digMarker-digZoneCenter)<=width/2;
+        meter.classList.toggle("in-zone",inZone);
+        meter.setAttribute("aria-valuemin","0");meter.setAttribute("aria-valuemax","100");meter.setAttribute("aria-valuenow",String(Math.round(digMarker*100)));
+        meter.setAttribute("aria-valuetext",inZone?"Pusť teď":"Drž a přenášej hlínu");
+        $("digMarker").style.left=`calc(${digMarker*100}% - 5px)`;
+        $("digTimerFill").style.transform=`scaleX(${digTimeLeft/8})`;
+        if(digTimeLeft<=0)failDig();
+        return;
+      }
+      digMarker+=digDir*dt*digSpeed;digTimeLeft=Math.max(0,digTimeLeft-dt);
+      if(digMarker>=1){digMarker=1;digDir=-1;}if(digMarker<=0){digMarker=0;digDir=1;}
+      const inZone=Math.abs(digMarker-digZoneCenter)<=width/2;
+      meter.classList.toggle("in-zone",inZone);meter.setAttribute("aria-valuemin","0");meter.setAttribute("aria-valuemax","100");meter.setAttribute("aria-valuenow",String(Math.round(digMarker*100)));meter.setAttribute("aria-valuetext",inZone?"V zeleném poli":"Mimo zelené pole");$("digMarker").style.left=`calc(${digMarker*100}% - 5px)`;$("digTimerFill").style.transform=`scaleX(${digTimeLeft/7})`;
+      if(digTimeLeft<=0)failDig();return;
+    }
+    if(mode!=="playing"||!world)return;
+    scanCooldown=Math.max(0,scanCooldown-dt);player.invuln=Math.max(0,player.invuln-dt);dangerActive=false;dangerSource="";dangerRate=0;dangerCatchAfter=Infinity;bossIntroTimer=Math.max(0,bossIntroTimer-dt);if(bossIntroTimer<=0){ui.bossIntro?.classList.remove("show");ui.bossIntro?.classList.add("hidden");}
+    if(theftAlertShown&&performance.now()>=theftAlertUntil)hideTheftAlert();dangerBeatTimer=Math.max(0,dangerBeatTimer-dt);state.comboTimer=Math.max(0,state.comboTimer-dt);if(state.comboTimer<=0&&state.combo>1){state.combo--;state.comboTimer=5;}
+    if(theftAlertShown){
+      input.x=input.y=0;stopPlayerMotion();updateParticles(dt);
+      camera.x=lerp(camera.x,clamp(player.x-viewport.w/2,0,Math.max(0,world.w-viewport.w)),1-Math.exp(-5*dt));camera.y=lerp(camera.y,clamp(player.y-viewport.h/2,0,Math.max(0,world.h-viewport.h)),1-Math.exp(-5*dt));
+      updateHUD();return;
+    }
+    if(updateMalseArrivalIncident(elapsed)){updateParticles(dt);camera.x=lerp(camera.x,clamp(player.x-viewport.w/2,0,Math.max(0,world.w-viewport.w)),1-Math.exp(-5*dt));camera.y=lerp(camera.y,clamp(player.y-viewport.h/2,0,Math.max(0,world.h-viewport.h)),1-Math.exp(-5*dt));updateHUD();return;}
+    updatePlayerMovement(dt);
+    updateHotspots(dt);updateProps(dt);updatePatrols(dt);updateRival(dt);resolveDanger(dt);if((dangerActive||state.heat>=68)&&dangerBeatTimer<=0){audio.sfx("heartbeat");dangerBeatTimer=state.heat>=88?.42:.68;}for(const ping of world.radarPings)ping.life-=dt;world.radarPings=world.radarPings.filter(ping=>ping.life>0);updateParticles(dt);findNearest();
+    camera.x=lerp(camera.x,clamp(player.x-viewport.w/2,0,Math.max(0,world.w-viewport.w)),1-Math.exp(-5*dt));camera.y=lerp(camera.y,clamp(player.y-viewport.h/2,0,Math.max(0,world.h-viewport.h)),1-Math.exp(-5*dt));
+    if(scanPulse>0){scanPulse+=dt*1.4;if(scanPulse>1)scanPulse=0;}
+    if(state.heat>=100)caught("Hlídka tě zastavila");updateHUD();
+  }
+
+  function updateHotspots(dt){for(const h of world.hotspots){if(!h.active)continue;if(h.revealed){h.ttl-=dt;if(h.ttl<=0&&!h.marked)h.revealed=false;}}}
+  function updateProps(dt){
+    for(const p of world.props){
+      if(p.type!=="excavator")continue;
+      if(!Number.isFinite(p.workSpeed))p.workSpeed=p.working?1:0;
+      if(!Number.isFinite(p.workPhase))p.workPhase=0;
+      if(!Number.isFinite(p.turretAngle))p.turretAngle=0;
+      if(!Number.isFinite(p.turretTarget))p.turretTarget=p.turretAngle;
+      const targetSpeed=p.working?1:0;
+      p.workSpeed=approach(p.workSpeed,targetSpeed,dt*2.5);
+      if(p.workSpeed>.001)p.workPhase+=dt*(1.05+p.workSpeed*.65)*p.workSpeed;
+      else p.workSpeed=0;
+      const turnDelta=Math.atan2(Math.sin(p.turretTarget-p.turretAngle),Math.cos(p.turretTarget-p.turretAngle));
+      const maxTurn=.72*dt;
+      p.turretAngle+=clamp(turnDelta,-maxTurn,maxTurn);
+      p.turnAmount=approach(p.turnAmount||0,clamp(Math.abs(turnDelta)*2.4,0,1),dt*2.8);
+    }
+  }
+  function updatePatrols(dt){
+    for(const p of world.patrols){
+      if(!p.active)continue;
+      const target=p.points[p.index],dx=target.x-p.x,dy=target.y-p.y,d=Math.hypot(dx,dy)||1;
+      const previousX=p.x,previousY=p.y;
+      const travel=Math.min(Math.max(0,p.speed)*dt,d);
+      p.x+=dx/d*travel;p.y+=dy/d*travel;
+      const movedDistance=Math.hypot(p.x-previousX,p.y-previousY);
+      const movementAngle=Math.atan2(dy,dx);
+      const vehicle=p.type==="tractor"||p.type==="bike"||p.type==="car";
+      if(vehicle){
+        p.angle=movementAngle;
+        if(!Number.isFinite(p.visualAngle))p.visualAngle=movementAngle;
+        if(movedDistance>.02){
+          const delta=Math.atan2(Math.sin(movementAngle-p.visualAngle),Math.cos(movementAngle-p.visualAngle));
+          const maxTurn=(p.type==="tractor"?1.9:3.4)*dt;
+          p.visualAngle+=clamp(delta,-maxTurn,maxTurn);
+          p.turnAmount=approach(p.turnAmount||0,clamp(delta*2.2,-1,1),3.4*dt);
+        }else p.turnAmount=approach(p.turnAmount||0,0,4.2*dt);
+      }
+      updateHumanoidMotionState(p,p.x-previousX,p.y-previousY,movedDistance,dt,160,{orient:!vehicle});
+      if(vehicle){
+        const wheelRadius=p.type==="tractor"?20*(p.scale||1):p.type==="bike"?9*(p.scale||1):6*(p.scale||1)*(p.visualScale||1);
+        p.wheelRotation=(p.wheelRotation||0)+(wheelRadius>0?movedDistance/wheelRadius:0);
+      }
+      if(p.working&&p.moving)p.workPhase=(p.workPhase||0)+movedDistance*.075;
+      if(d<12)p.index=(p.index+1)%p.points.length;
+      if(vehicle){const rr=p.type==="tractor"?48*(p.scale||1):25*(p.scale||1);if(!p.debugNoCollision&&Math.hypot(p.x-player.x,p.y-player.y)<rr+player.r)caught(p.type==="tractor"?"Traktor tě srazil":"Pozor na provoz");continue;}
+      let suspicious=true;if(p.requires==="permit"&&world.runtime.permit)suspicious=false;if(p.type==="ranger"&&world.runtime.open<=0)suspicious=false;if(p.type==="police"&&world.runtime.papers>=3&&!world.rival?.active)suspicious=false;
+      p.seesPlayer=false;
+      if(!suspicious||!p.vision)continue;
+      if(insideVisionCone(p,p.vision,p.halfAngle||.57)){
+        p.seesPlayer=true;
+        const source=p.type==="digger"?"Svítilna kopáče":p.type==="ranger"?"Lesní hlídka":p.type==="police"?"Policejní hlídka":"Majitel pozemku";
+        markDanger(source,p.type==="digger"?48:38,p.type==="digger"?1.85:2.35);
+      }
+    }
+  }
+  function updateRival(dt){
+    const r=world.rival;
+    if(r&&r.active&&r.name==="franta"){
+      const previousX=r.x,previousY=r.y;
+      r.hitFlash=Math.max(0,(r.hitFlash||0)-dt);r.graceTimer=Math.max(0,(r.graceTimer||0)-dt);
+      if(r.graceTimer<=0){
+        const target=r.escapeTarget||{x:1650,y:980},dx=target.x-r.x,dy=target.y-r.y,d=Math.hypot(dx,dy)||1;
+        const travel=Math.min(r.speed*dt,d);r.x+=dx/d*travel;r.y+=dy/d*travel;r.angle=Math.atan2(dy,dx);const movedX=r.x-previousX,movedY=r.y-previousY,movedDistance=Math.hypot(movedX,movedY);updateHumanoidMotionState(r,movedX,movedY,movedDistance,dt,Math.max(160,r.baseSpeed||160));
+        if(d<=24){r.active=false;world.runtime.bossDefeated=true;world.runtime.frantaEscaped=true;world.runtime.dossierRecovered=false;state.stats.dossier=0;ui.bossHud?.classList.add("hidden");toast("Franta utekl s kontrolními podklady. Pořadatel má jejich kopie, takže můžeš pokračovat do sálu.","bad",2400);save();}
+      }
+      return;
+    }
+    if(r&&r.active){
+      const previousX=r.x,previousY=r.y;
+      r.hitFlash=Math.max(0,(r.hitFlash||0)-dt);
+      r.stunTimer=Math.max(0,(r.stunTimer||0)-dt);
+      r.graceTimer=Math.max(0,(r.graceTimer||0)-dt);
+      if(r.graceTimer<=0)r.dashTimer-=dt;
+      if(r.trail){if(r.dashTime>0)r.trail.unshift({x:r.x,y:r.y,life:.34});for(const t of r.trail)t.life-=dt;r.trail=r.trail.filter(t=>t.life>0).slice(0,8);}
+      if(r.dashTime>0){
+        r.dashTime-=dt;
+        r.x+=Math.cos(r.angle)*r.speed*2.25*dt;r.y+=Math.sin(r.angle)*r.speed*2.25*dt;
+        if(r.dashTime<=0){r.stunTimer=.9;r.target={x:rand(240,1560),y:rand(180,980)};toast("KAREL SE ZASTAVIL · TEĎ!","good",850);}
+      }else if(r.stunTimer<=0){
+        const dx=r.target.x-r.x,dy=r.target.y-r.y,d=Math.hypot(dx,dy)||1;
+        const weave=r.phase>=2?Math.sin(performance.now()*.004+r.x)*18:0;
+        r.x+=(dx/d*r.speed+Math.cos(r.angle+Math.PI/2)*weave)*dt;r.y+=(dy/d*r.speed+Math.sin(r.angle+Math.PI/2)*weave)*dt;r.angle=Math.atan2(dy,dx);
+        if(d<28)r.target={x:rand(170,1630),y:rand(150,1040)};
+        if(r.graceTimer<=0&&r.name==="karel"&&r.dashTimer<=0){r.dashTimer=Math.max(1.25,2.5-r.phase*.35)+Math.random()*.55;r.dashTime=.42+.06*r.phase;r.angle=Math.atan2(player.y-r.y,player.x-r.x)+pick([-.72,.72]);audio.sfx("alert");}
+      }
+      r.x=clamp(r.x,80,1720);r.y=clamp(r.y,100,1120);
+      const movedX=r.x-previousX,movedY=r.y-previousY,movedDistance=Math.hypot(movedX,movedY);
+      updateHumanoidMotionState(r,movedX,movedY,movedDistance,dt,Math.max(160,r.baseSpeed||160));
+      r.seesPlayer=false;
+      if(r.graceTimer<=0&&r.flashlight&&r.stunTimer<=0&&insideVisionCone(r,r.vision,r.halfAngle)){
+        r.seesPlayer=true;markDanger("Karlova svítilna",r.phase>=3?72:r.phase===2?64:58,r.phase>=3?1.15:r.phase===2?1.35:1.55);
+      }
+      r.throwTimer-=dt;
+      if(r.graceTimer<=0&&r.throwTimer<=0&&r.stunTimer<=0&&r.dashTime<=0){r.throwTimer=Math.max(.48,1.15-r.phase*.18)+Math.random()*.42;const aim=Math.atan2(player.y-r.y,player.x-r.x);world.hazards.push({type:"clod",x:r.x,y:r.y,vx:Math.cos(aim)*150*(1+r.phase*.08),vy:Math.sin(aim)*150*(1+r.phase*.08),life:2.2,r:10+r.phase});}
+    }
+    for(const h of world.hazards){if(h.type!=="clod")continue;h.x+=h.vx*dt;h.y+=h.vy*dt;h.life-=dt;if(h.life>0&&Math.hypot(h.x-player.x,h.y-player.y)<h.r+player.r){h.life=0;state.heat=clamp(state.heat+15,0,100);shake=Math.max(shake,5);toast("Zásah hroudou","bad",650);}}
+    world.hazards=world.hazards.filter(h=>h.life>0);
+  }
+  function updateParticles(dt){for(const p of world.particles){p.life-=dt;p.x+=p.vx*dt;p.y+=p.vy*dt;p.vy+=20*dt;}world.particles=world.particles.filter(p=>p.life>0);}
+
+  const ACTION_PRESENTATIONS={
+    npc:["!","MLUVIT"],
+    hotspot:["⛏","KOPAT"],
+    item:["◆","SEBRAT"],
+    hole:["▨","ZAHRABAT"],
+    rival:["✋","CHYTIT"],
+    exit:["→","ODEJÍT"]
+  };
+
+  function actionPresentation(target){
+    let presentation=ACTION_PRESENTATIONS[target.kind]||["◎","AKCE"];
+    if(target.kind==="item"&&world.id==="malse"&&target.ref.type==="paper"){
+      presentation=target.ref.special==="certificate"?["▣","VZÍT SLOŽKU"]:["◎","PROVĚŘIT"];
+    }else if(target.kind==="rival"&&target.ref.name==="franta"){
+      presentation=["✋","ZASTAVIT"];
+    }else if(target.kind==="exit"&&world.id==="malse"){
+      if(!world.runtime.certificateRecovered)presentation=["◉","NAJDI SLOŽKU"];
+      else if(!world.runtime.registered)presentation=["▣","REGISTROVAT"];
+      else if(world.runtime.papers<3)presentation=["◎","INDICIE"];
+      else if(!world.runtime.fraudResolved)presentation=["◉","KONTROLA"];
+      else presentation=["→","VSTOUPIT"];
+    }
+    return presentation;
+  }
+
+  function updateActionPrompt(){
+    const actionButton=$("actionButton");
+    if(!nearest){
+      const cooldown=Math.ceil(scanCooldown);
+      ui.actionIcon.textContent="◉";
+      ui.actionText.textContent=scanCooldown>0?`${cooldown}`:"RADAR";
+      actionButton.classList.remove("ready","boss-ready");
+      actionButton.setAttribute("aria-label",scanCooldown>0?`Radar připraven za ${cooldown} s`:"Spustit radar");
+      hideHint();
+      return;
+    }
+    const [icon,label]=actionPresentation(nearest);
+    const accessibleLabel=nearest.kind==="exit"&&world.id!=="malse"?nearest.ref.label:label;
+    ui.actionIcon.textContent=icon;
+    ui.actionText.textContent=label;
+    actionButton.classList.add("ready");
+    actionButton.classList.toggle("boss-ready",nearest.kind==="rival"&&(nearest.ref.name==="franta"||nearest.ref.stunTimer>0));
+    actionButton.setAttribute("aria-label",accessibleLabel);
+    showHint(accessibleLabel);
+  }
+
+  function findNearest(){
+    nearest=null;
+    let best=160;
+    const check=(kind,ref,x,y,range=68)=>{
+      const d=Math.hypot(x-player.x,y-player.y);
+      if(d<range&&d<best){
+        best=d;
+        nearest={kind,ref,x,y};
+      }
+    };
+    for(const p of world.props)if(p.type==="npc"&&!p.used)check("npc",p,p.x,p.y);
+    for(const h of world.hotspots)if(h.active&&h.revealed)check("hotspot",h,h.x,h.y);
+    for(const i of world.items)if(i.active&&!i.hidden)check(i.type==="hole"?"hole":"item",i,i.x,i.y,i.type==="hole"?98:68);
+    if(world.rival?.active)check("rival",world.rival,world.rival.x,world.rival.y,world.rival.name==="franta"?140:world.rival.stunTimer>0?92:66);
+    if(world.exit&&!world.rival?.active)check("exit",world.exit,world.exit.x,world.exit.y,88);
+    updateActionPrompt();
+  }
+
+  function burst(x,y,color,count=14){for(let i=0;i<count;i++)world.particles.push({x,y,vx:rand(-90,90),vy:rand(-120,-30),life:rand(.45,.9),color,r:rand(2,5)});}
+  function emitFootstep(){
+    if(!world)return;
+    const colors={field:"rgba(225,198,151,.42)",meadow:"rgba(211,195,153,.38)",forest:"rgba(128,105,73,.42)",night:"rgba(169,203,178,.28)",city:"rgba(214,220,212,.34)"};
+    const backX=player.x-Math.cos(player.angle)*5,backY=player.y-Math.sin(player.angle)*5;
+    for(let i=0;i<2;i++)world.particles.push({x:backX+rand(-6,6),y:backY+rand(-3,3),vx:rand(-13,13),vy:rand(-23,-8),life:rand(.2,.34),color:colors[world.theme]||colors.field,r:rand(1.6,3.2)});
+  }
+
+  function render(){
+    ctx.setTransform(viewport.dpr,0,0,viewport.dpr,0,0);ctx.clearRect(0,0,viewport.w,viewport.h);
+    if(!world){drawMenuBackdrop();return;}
+    if(world.referenceScene){
+      const fit=Math.min(viewport.w/world.w,viewport.h/world.h);
+      const ox=(viewport.w-world.w*fit)/2,oy=(viewport.h-world.h*fit)/2;
+      ctx.fillStyle="#66513e";ctx.fillRect(0,0,viewport.w,viewport.h);
+      ctx.save();ctx.translate(ox,oy);ctx.scale(fit,fit);
+      if(terrainCache.canvas){ctx.drawImage(terrainCache.canvas,0,0,terrainCache.canvas.width,terrainCache.canvas.height,0,0,world.w,world.h);}else{drawGround();drawGroundDetails();}
+      drawWorldObjects();ctx.restore();return;
+    }
+    ctx.save();const sx=shake&&!reducedMotion?(Math.random()-.5)*shake:0,sy=shake&&!reducedMotion?(Math.random()-.5)*shake:0;ctx.translate(sx-camera.x,sy-camera.y);if(terrainCache.canvas){ctx.drawImage(terrainCache.canvas,0,0,terrainCache.canvas.width,terrainCache.canvas.height,0,0,world.w,world.h);}else{drawGround();drawGroundDetails();}drawWorldObjects();drawEffects();ctx.restore();drawScreenVignette();drawAtmosphereOverlay();drawObjectiveArrow();
+  }
+
+  function drawMenuBackdrop(){const g=ctx.createLinearGradient(0,0,0,viewport.h);g.addColorStop(0,"#142a35");g.addColorStop(.52,"#2b4633");g.addColorStop(1,"#3b2d22");ctx.fillStyle=g;ctx.fillRect(0,0,viewport.w,viewport.h);}
+
+  function drawGround(){
+    if(world.theme==="field")drawField();
+    else if(world.theme==="meadow")drawMeadow();
+    else if(world.theme==="forest"||world.theme==="night")drawForest();
+    else drawCity();
+  }
+  function drawGroundDetails(){
+    ctx.save();ctx.lineCap="round";
+    if(world.theme==="field"){
+      for(let i=0;i<74;i++){const x=28+(i*137)%1740,y=210+(i*89)%970;ctx.fillStyle=i%4?"rgba(78,55,37,.32)":"rgba(198,165,111,.32)";ctx.beginPath();ctx.ellipse(x,y,2+i%3,1.4+(i%2),i*.11,0,Math.PI*2);ctx.fill();}
+      ctx.strokeStyle="rgba(232,201,146,.18)";ctx.lineWidth=2;for(let i=0;i<18;i++){const x=50+i*103,y=260+(i%7)*128;ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(x+13,y-8);ctx.stroke();}
+    }else if(world.theme==="meadow"){
+      for(let i=0;i<95;i++){const x=24+(i*149)%1750,y=40+(i*103)%1120;ctx.strokeStyle="rgba(69,91,55,.42)";ctx.lineWidth=1.5;ctx.beginPath();ctx.moveTo(x,y+5);ctx.lineTo(x+((i%3)-1)*3,y-4);ctx.stroke();ctx.fillStyle=i%5===0?"#e8d77a":i%3===0?"#d4e4c0":"rgba(225,236,202,.72)";ctx.beginPath();ctx.arc(x+((i%3)-1)*3,y-5,1.5+(i%2)*.5,0,Math.PI*2);ctx.fill();}
+    }else if(world.theme==="forest"){
+      for(let i=0;i<86;i++){const x=30+(i*157)%1730,y=30+(i*109)%1130;ctx.fillStyle=i%3?"rgba(151,116,70,.34)":"rgba(89,120,70,.34)";ctx.beginPath();ctx.ellipse(x,y,4+(i%3),2.2,(i%7)*.38,0,Math.PI*2);ctx.fill();}
+      ctx.strokeStyle="rgba(55,43,30,.28)";ctx.lineWidth=3;for(let i=0;i<12;i++){const x=90+i*151,y=110+(i*173)%980;ctx.beginPath();ctx.moveTo(x-16,y);ctx.quadraticCurveTo(x,y-8,x+22,y+3);ctx.stroke();}
+    }else if(world.theme==="night"){
+      for(let i=0;i<72;i++){const x=32+(i*163)%1725,y=34+(i*113)%1125;ctx.fillStyle=i%4?"rgba(62,48,37,.42)":"rgba(182,153,105,.22)";ctx.beginPath();ctx.ellipse(x,y,3+i%4,2+(i%2),i*.2,0,Math.PI*2);ctx.fill();}
+      ctx.strokeStyle="rgba(226,195,142,.12)";ctx.lineWidth=2;for(let i=0;i<16;i++){const x=130+i*101,y=180+(i*149)%880;ctx.beginPath();ctx.moveTo(x-10,y);ctx.lineTo(x+12,y-3);ctx.stroke();}
+    }else{
+      ctx.strokeStyle="rgba(216,232,226,.38)";ctx.lineWidth=3;ctx.beginPath();ctx.moveTo(430,0);ctx.lineTo(430,world.h);ctx.stroke();
+      for(let y=36;y<world.h;y+=92){ctx.fillStyle="#526366";roundRect(ctx,423,y,14,8,3);ctx.fill();ctx.strokeStyle="rgba(211,231,225,.45)";ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(430,y+7);ctx.lineTo(430,y+45);ctx.stroke();}
+      ctx.strokeStyle="rgba(255,255,255,.1)";ctx.lineWidth=1;for(let x=1110;x<1800;x+=58){ctx.beginPath();ctx.moveTo(x,420);ctx.lineTo(x,1200);ctx.stroke();}
+    }
+    ctx.restore();
+  }
+  function drawField(){
+    const g=ctx.createLinearGradient(0,0,0,world.h);
+    g.addColorStop(0,"#829a63");g.addColorStop(.1,"#6e8355");g.addColorStop(.2,"#917b59");g.addColorStop(.58,"#71563f");g.addColorStop(1,"#5d4434");ctx.fillStyle=g;ctx.fillRect(0,0,world.w,world.h);
+
+    // Distant tree line and wet headland create depth before the worked soil begins.
+    ctx.fillStyle="#293b2c";ctx.fillRect(0,0,world.w,104);
+    for(let i=0;i<30;i++){const x=i*68+(i%3)*11,h=54+(i*17)%42;ctx.fillStyle=i%3?"#304730":"#263b2b";ctx.beginPath();ctx.moveTo(x,108);ctx.lineTo(x+33,108-h);ctx.lineTo(x+71,108);ctx.closePath();ctx.fill();}
+    const headland=ctx.createLinearGradient(0,104,0,224);headland.addColorStop(0,"#60794e");headland.addColorStop(1,"#8d805e");ctx.fillStyle=headland;ctx.fillRect(0,104,world.w,120);
+    ctx.strokeStyle="rgba(214,226,190,.13)";ctx.lineWidth=2;for(let x=18;x<world.w;x+=43){ctx.beginPath();ctx.moveTo(x,135);ctx.lineTo(x+7,184);ctx.stroke();}
+
+    // Irregular furrows replace the former horizontal stripes; deterministic curves avoid visual flicker.
+    for(let row=0;row<12;row++){
+      const y=238+row*82+(row%3)*7;
+      const band=ctx.createLinearGradient(0,y-10,0,y+62);band.addColorStop(0,row%2?"#806248":"#76583f");band.addColorStop(.48,row%2?"#664a37":"#604431");band.addColorStop(1,row%2?"#826449":"#795a42");
+      ctx.fillStyle=band;ctx.beginPath();ctx.moveTo(0,y-15);ctx.bezierCurveTo(420,y-28+(row%2)*8,920,y+10,world.w,y-10);ctx.lineTo(world.w,y+58);ctx.bezierCurveTo(1230,y+42,620,y+78,0,y+55);ctx.closePath();ctx.fill();
+
+      ctx.strokeStyle="rgba(42,28,20,.32)";ctx.lineWidth=3.2;
+      for(let lane=0;lane<7;lane++){const x=-90+lane*315+(row%2)*38;ctx.beginPath();ctx.moveTo(x,y-8);ctx.bezierCurveTo(x+90,y+12,x+175,y+28,x+285,y+51);ctx.stroke();}
+      ctx.strokeStyle="rgba(211,177,123,.12)";ctx.lineWidth=1.5;ctx.beginPath();ctx.moveTo(0,y+10);ctx.bezierCurveTo(520,y-2,1120,y+28,world.w,y+8);ctx.stroke();
+    }
+
+    // Mud clods, stones, stubble and shallow rain sheen break up the broad field shapes.
+    for(let i=0;i<210;i++){const x=(i*127+37)%world.w,y=226+((i*83+i*i*3)%950),r=1.5+(i%4)*.8;ctx.fillStyle=i%5===0?"rgba(196,160,108,.27)":i%3===0?"rgba(45,31,24,.32)":"rgba(92,68,49,.36)";ctx.beginPath();ctx.ellipse(x,y,r*1.5,r,(i%7)*.31,0,Math.PI*2);ctx.fill();}
+    for(let i=0;i<22;i++){const x=70+(i*179)%1660,y=260+(i*137)%870;ctx.strokeStyle="rgba(182,159,112,.34)";ctx.lineWidth=1.6;ctx.beginPath();ctx.moveTo(x,y+5);ctx.lineTo(x-2,y-10);ctx.moveTo(x+4,y+5);ctx.lineTo(x+7,y-8);ctx.stroke();}
+    ctx.strokeStyle="rgba(58,43,31,.42)";ctx.lineWidth=7;ctx.lineCap="round";
+    for(const off of [-12,12]){ctx.beginPath();ctx.moveTo(290,320+off);ctx.bezierCurveTo(650,350+off,1020,430+off,1570,455+off);ctx.stroke();}
+    ctx.strokeStyle="rgba(215,202,169,.08)";ctx.lineWidth=2;for(let i=0;i<7;i++){const x=180+i*245,y=320+(i%3)*190;ctx.beginPath();ctx.ellipse(x,y,65,12,(i%4)*.12,0,Math.PI*2);ctx.stroke();}
+    if(world.id==="chlum"&&!world.referenceScene){
+      // Locality identity: broad headlands and remises interrupt the otherwise open ploughed field.
+      const edge=ctx.createLinearGradient(0,0,150,0);edge.addColorStop(0,"rgba(58,79,45,.92)");edge.addColorStop(1,"rgba(102,112,73,.08)");
+      ctx.fillStyle=edge;ctx.beginPath();ctx.moveTo(0,178);ctx.bezierCurveTo(42,250,54,410,31,570);ctx.bezierCurveTo(15,735,71,910,0,1125);ctx.closePath();ctx.fill();
+      const edgeR=ctx.createLinearGradient(world.w,0,world.w-150,0);edgeR.addColorStop(0,"rgba(50,73,43,.88)");edgeR.addColorStop(1,"rgba(104,106,67,.06)");
+      ctx.fillStyle=edgeR;ctx.beginPath();ctx.moveTo(world.w,205);ctx.bezierCurveTo(world.w-42,330,world.w-18,470,world.w-61,620);ctx.bezierCurveTo(world.w-88,760,world.w-35,930,world.w,1090);ctx.closePath();ctx.fill();
+
+      // Low shrub groups make the field edge readable as a South-Bohemian remise, not a decorative border.
+      const hedge=(x,y,s)=>{
+        ctx.fillStyle="rgba(0,0,0,.16)";ctx.beginPath();ctx.ellipse(x,y+10,34*s,9*s,0,0,Math.PI*2);ctx.fill();
+        for(const q of [[-18,-2,18],[3,-12,22],[22,-1,16]]){
+          const g=ctx.createRadialGradient(x+q[0]*s-5,y+q[1]*s-6,2,x+q[0]*s,y+q[1]*s,q[2]*s);
+          g.addColorStop(0,"#66825a");g.addColorStop(.55,"#405f40");g.addColorStop(1,"#29462f");
+          ctx.fillStyle=g;ctx.beginPath();ctx.arc(x+q[0]*s,y+q[1]*s,q[2]*s,0,Math.PI*2);ctx.fill();
+        }
+      };
+      hedge(105,365,1.12);hedge(125,820,1.0);hedge(1615,475,1.12);hedge(1585,880,1.18);
+
+      // Compacted headland lanes interrupt the furrows where machinery turns.
+      ctx.fillStyle="rgba(139,116,79,.42)";
+      for(const q of [[330,252,175,26,-.08],[820,265,155,24,.04],[1320,246,190,27,-.05],[520,1015,170,25,.06],[1160,1040,205,28,-.03]]){
+        ctx.save();ctx.translate(q[0],q[1]);ctx.rotate(q[4]);ctx.beginPath();ctx.ellipse(0,0,q[2],q[3],0,0,Math.PI*2);ctx.fill();ctx.restore();
+      }
+      ctx.strokeStyle="rgba(67,50,35,.34)";ctx.lineWidth=4;
+      for(const q of [[330,252,160,-.08],[820,265,140,.04],[1320,246,175,-.05]]){
+        ctx.save();ctx.translate(q[0],q[1]);ctx.rotate(q[3]);
+        for(const yy of [-8,8]){ctx.beginPath();ctx.moveTo(-q[2],yy);ctx.lineTo(q[2],yy);ctx.stroke();}
+        ctx.restore();
+      }
+
+      // Two long paired tyre routes cross multiple furrow bands. Patchy linework prevents a rail-like silhouette.
+      ctx.strokeStyle="rgba(58,43,31,.32)";ctx.lineWidth=3.6;ctx.lineCap="round";ctx.setLineDash([34,16]);
+      for(const off of [-9,9]){
+        ctx.beginPath();ctx.moveTo(350+off,248);ctx.bezierCurveTo(405+off,430,472+off,725,575+off,1110);ctx.stroke();
+        ctx.beginPath();ctx.moveTo(1495+off,250);ctx.bezierCurveTo(1452+off,470,1410+off,760,1315+off,1112);ctx.stroke();
+      }
+      ctx.setLineDash([]);
+      ctx.strokeStyle="rgba(210,182,132,.1)";ctx.lineWidth=1.4;
+      ctx.beginPath();ctx.moveTo(350,250);ctx.bezierCurveTo(405,430,472,725,575,1110);ctx.stroke();
+      ctx.beginPath();ctx.moveTo(1495,250);ctx.bezierCurveTo(1452,470,1410,760,1315,1112);ctx.stroke();
+      // Short tread impressions read as machinery ruts rather than road markings.
+      ctx.strokeStyle="rgba(48,35,27,.2)";ctx.lineWidth=2;
+      for(let n=0;n<7;n++){
+        const y=365+n*108,xa=390+n*23,xb=1468-n*20;
+        ctx.beginPath();ctx.moveTo(xa-14,y-4);ctx.lineTo(xa+13,y+4);ctx.stroke();
+        ctx.beginPath();ctx.moveTo(xb-13,y+3);ctx.lineTo(xb+13,y-4);ctx.stroke();
+      }
+
+      // Sparse unworked patches break the ploughed rhythm without creating diggable holes.
+      for(const q of [[735,490,58,18,.1],[1095,690,72,20,-.08],[815,875,54,16,.04]]){
+        ctx.save();ctx.translate(q[0],q[1]);ctx.rotate(q[4]);
+        ctx.fillStyle="rgba(151,128,88,.28)";ctx.beginPath();ctx.ellipse(0,0,q[2],q[3],0,0,Math.PI*2);ctx.fill();
+        ctx.strokeStyle="rgba(214,187,137,.16)";ctx.lineWidth=1.5;ctx.stroke();ctx.restore();
+      }
+    }
+  }
+  function drawMeadow(){
+    if(world.id!=="locenice"){
+      const g=ctx.createLinearGradient(0,0,0,world.h);g.addColorStop(0,"#5d6f54");g.addColorStop(.25,"#74806a");g.addColorStop(1,"#b8a782");ctx.fillStyle=g;ctx.fillRect(0,0,world.w,world.h);
+      return;
+    }
+
+    // Ločenice: pale sandy forest floor with only sparse vegetation.
+    const g=ctx.createLinearGradient(0,0,0,world.h);
+    g.addColorStop(0,"#d9cca9");g.addColorStop(.38,"#ceb991");g.addColorStop(1,"#bca37c");
+    ctx.fillStyle=g;ctx.fillRect(0,0,world.w,world.h);
+
+    // Broad light sand shelves are the primary locality signature; asymmetric shapes avoid a repeated oval pattern.
+    for(let i=0;i<13;i++){
+      const x=70+(i*211)%Math.max(140,world.w-120),y=65+(i*157)%Math.max(180,world.h-120);
+      const w=92+(i%4)*42,h=19+(i%3)*8,ang=((i%7)-3)*.065;
+      ctx.save();ctx.translate(x,y);ctx.rotate(ang);
+      const sand=ctx.createLinearGradient(-w,0,w,0);sand.addColorStop(0,"rgba(231,213,175,.12)");sand.addColorStop(.5,"rgba(244,229,195,.38)");sand.addColorStop(1,"rgba(194,170,128,.1)");
+      ctx.fillStyle=sand;ctx.beginPath();ctx.moveTo(-w*.92,0);ctx.bezierCurveTo(-w*.56,-h*1.15,w*.2,-h*.75,w*.94,-h*.08);ctx.bezierCurveTo(w*.58,h*.9,-w*.28,h*1.05,-w*.92,0);ctx.closePath();ctx.fill();
+      ctx.strokeStyle="rgba(255,242,213,.14)";ctx.lineWidth=1;ctx.stroke();ctx.restore();
+    }
+
+    // Pine-needle mats: warm short strokes, grouped but deterministic.
+    ctx.lineCap="round";
+    for(let i=0;i<185;i++){
+      const x=22+(i*109)%Math.max(90,world.w-44),y=30+(i*73+i*i*3)%Math.max(120,world.h-60);
+      const a=((i%9)-4)*.18,len=4+(i%4)*1.7;
+      ctx.strokeStyle=i%4===0?"rgba(112,78,47,.34)":"rgba(137,96,56,.26)";
+      ctx.lineWidth=1.15;ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(x+Math.cos(a)*len,y+Math.sin(a)*len);ctx.stroke();
+    }
+
+    // Sparse grass islands keep the place a pine wood, not an open meadow.
+    for(let i=0;i<38;i++){
+      const x=38+(i*167)%Math.max(100,world.w-75),y=45+(i*101)%Math.max(130,world.h-85);
+      ctx.strokeStyle=i%3===0?"rgba(82,103,66,.42)":"rgba(102,118,77,.34)";ctx.lineWidth=1.5;
+      for(const o of [-3,1,4]){ctx.beginPath();ctx.moveTo(x+o,y+5);ctx.quadraticCurveTo(x+o-2,y,x+o+(o%2),y-7-(i%4));ctx.stroke();}
+    }
+
+    // Wind-scoured shallow sandy footpath; deliberately thin and low-contrast so it cannot read as a road.
+    ctx.strokeStyle="rgba(128,105,76,.16)";ctx.lineWidth=25;ctx.lineCap="round";
+    ctx.beginPath();ctx.moveTo(world.w*.08,world.h*.9);ctx.bezierCurveTo(world.w*.28,world.h*.75,world.w*.39,world.h*.52,world.w*.55,world.h*.55);ctx.bezierCurveTo(world.w*.72,world.h*.58,world.w*.78,world.h*.29,world.w*.94,world.h*.1);ctx.stroke();
+    ctx.strokeStyle="rgba(235,219,184,.35)";ctx.lineWidth=10;ctx.stroke();
+
+    // Thin root-like seams in exposed sand support the close-ground texture without becoming obstacles.
+    ctx.strokeStyle="rgba(111,78,49,.23)";ctx.lineWidth=2;
+    for(let i=0;i<12;i++){
+      const x=world.w*(.12+((i*17)%73)/100),y=world.h*(.18+((i*23)%67)/100);
+      ctx.beginPath();ctx.moveTo(x-24,y+5);ctx.bezierCurveTo(x-7,y-7,x+8,y+10,x+28,y-3);ctx.stroke();
+      if(i%2===0){ctx.beginPath();ctx.moveTo(x+3,y+3);ctx.lineTo(x+14,y+14);ctx.stroke();}
+    }
+  }
+  function drawForest(){
+    if(world.id==="besednice"){
+      // Besednice: disturbed quarry slopes with readable terraces and geological bands.
+      const g=ctx.createLinearGradient(0,0,0,world.h);
+      g.addColorStop(0,"#445246");g.addColorStop(.12,"#4c5545");g.addColorStop(.2,"#786852");g.addColorStop(1,"#6d5847");
+      ctx.fillStyle=g;ctx.fillRect(0,0,world.w,world.h);
+
+      // Dark conifer horizon stays at the upper quarry edge.
+      ctx.fillStyle="#24382a";ctx.fillRect(0,0,world.w,118);
+      for(let i=0;i<24;i++){
+        const x=i*85;ctx.fillStyle=i%2?"#29452f":"#36553a";
+        ctx.beginPath();ctx.moveTo(x,118);ctx.lineTo(x+38,32);ctx.lineTo(x+78,118);ctx.closePath();ctx.fill();
+      }
+
+      // Broad terrace benches: irregular edges, not parallel decorative stripes.
+      const terraceCols=["rgba(148,119,88,.34)","rgba(101,79,61,.31)","rgba(174,143,100,.25)","rgba(92,70,56,.28)","rgba(155,120,85,.27)"];
+      for(let i=0;i<5;i++){
+        const y=190+i*185,amp=18+(i%3)*7;
+        ctx.fillStyle=terraceCols[i];
+        ctx.beginPath();ctx.moveTo(0,y+amp*.4);
+        ctx.bezierCurveTo(world.w*.2,y-amp,world.w*.39,y+amp*.75,world.w*.56,y-amp*.25);
+        ctx.bezierCurveTo(world.w*.72,y-amp*.7,world.w*.86,y+amp,world.w,y-amp*.1);
+        ctx.lineTo(world.w,y+72+(i%2)*14);
+        ctx.bezierCurveTo(world.w*.78,y+58,world.w*.62,y+92,world.w*.43,y+68);
+        ctx.bezierCurveTo(world.w*.24,y+48,world.w*.12,y+96,0,y+67);
+        ctx.closePath();ctx.fill();
+
+        // Exposed cut edge carries two thin geological seams.
+        for(let n=0;n<2;n++){
+          ctx.strokeStyle=n===0?"rgba(225,194,148,.22)":"rgba(67,50,41,.3)";
+          ctx.lineWidth=n===0?2.2:1.6;
+          ctx.beginPath();ctx.moveTo(24,y+18+n*12);
+          ctx.bezierCurveTo(world.w*.27,y-4+n*12,world.w*.48,y+28+n*9,world.w*.69,y+5+n*12);
+          ctx.bezierCurveTo(world.w*.82,y-4+n*12,world.w*.92,y+24+n*8,world.w-22,y+8+n*10);ctx.stroke();
+        }
+      }
+
+      // Broken local strata patches interrupt the terraces and create a quarried, rocky surface.
+      for(let i=0;i<24;i++){
+        const x=55+(i*167)%Math.max(120,world.w-100),y=150+(i*131)%Math.max(220,world.h-190);
+        const w=65+(i%4)*26,h=16+(i%3)*7,ang=((i%9)-4)*.08;
+        ctx.save();ctx.translate(x,y);ctx.rotate(ang);
+        ctx.fillStyle=i%3===0?"rgba(188,156,111,.17)":"rgba(79,61,51,.18)";
+        ctx.beginPath();ctx.moveTo(-w,2);ctx.lineTo(-w*.44,-h);ctx.lineTo(w*.28,-h*.55);ctx.lineTo(w,h*.1);ctx.lineTo(w*.36,h);ctx.lineTo(-w*.55,h*.65);ctx.closePath();ctx.fill();
+        ctx.strokeStyle="rgba(224,195,151,.12)";ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(-w*.72,0);ctx.lineTo(w*.68,-h*.1);ctx.stroke();ctx.restore();
+      }
+
+      // Deterministic angular rock chips reinforce the quarry material without becoming colliders.
+      for(let i=0;i<52;i++){
+        const x=28+(i*149)%Math.max(80,world.w-56),y=138+(i*83+i*i)%Math.max(180,world.h-160),r=2+(i%5)*1.1;
+        ctx.fillStyle=i%4===0?"rgba(205,179,137,.28)":"rgba(67,57,50,.38)";
+        ctx.beginPath();ctx.moveTo(x-r,y+r*.2);ctx.lineTo(x-r*.25,y-r);ctx.lineTo(x+r,y-r*.25);ctx.lineTo(x+r*.45,y+r);ctx.closePath();ctx.fill();
+      }
+      return;
+    }
+    if(world.id==="nesmen"){
+      // Nesměň: cool, damp forest floor. Dark soil dominates; moss and water sheen sit on top.
+      const g=ctx.createLinearGradient(0,0,0,world.h);
+      g.addColorStop(0,"#3c493d");g.addColorStop(.32,"#41483a");g.addColorStop(1,"#332f28");
+      ctx.fillStyle=g;ctx.fillRect(0,0,world.w,world.h);
+
+      // Dark wet soil texture, deterministic and precomputed into the terrain cache.
+      for(let i=0;i<260;i++){
+        const x=(i*113+31)%world.w,y=(i*79+i*i*2)%world.h,r=1.5+(i%5)*.75;
+        ctx.fillStyle=i%4===0?"rgba(169,157,126,.08)":i%3===0?"rgba(27,35,29,.28)":"rgba(74,63,50,.22)";
+        ctx.beginPath();ctx.ellipse(x,y,r*1.8,r,(i%8)*.2,0,Math.PI*2);ctx.fill();
+      }
+
+      // Irregular moss islands make the locality readable without adding collision.
+      for(let i=0;i<18;i++){
+        const x=65+(i*191)%Math.max(140,world.w-120),y=70+(i*149)%Math.max(170,world.h-130);
+        const w=62+(i%4)*27,h=22+(i%3)*9,ang=((i%7)-3)*.09;
+        ctx.save();ctx.translate(x,y);ctx.rotate(ang);
+        const moss=ctx.createLinearGradient(-w,0,w,0);moss.addColorStop(0,"rgba(75,96,61,.12)");moss.addColorStop(.48,"rgba(99,121,74,.34)");moss.addColorStop(1,"rgba(45,72,47,.1)");
+        ctx.fillStyle=moss;ctx.beginPath();ctx.moveTo(-w*.92,0);ctx.bezierCurveTo(-w*.6,-h,w*.16,-h*.75,w*.94,-h*.08);ctx.bezierCurveTo(w*.6,h*.8,-w*.35,h*1.06,-w*.92,0);ctx.closePath();ctx.fill();
+        ctx.strokeStyle="rgba(157,177,116,.1)";ctx.lineWidth=1;ctx.stroke();ctx.restore();
+      }
+
+      // Short cool highlights imply moisture without turning the place into standing water.
+      ctx.strokeStyle="rgba(164,192,177,.14)";ctx.lineWidth=1.4;ctx.lineCap="round";
+      for(let i=0;i<26;i++){
+        const x=40+(i*157)%Math.max(90,world.w-80),y=55+(i*107)%Math.max(120,world.h-100),len=9+(i%4)*5;
+        ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(x+len,y+(i%2));ctx.stroke();
+      }
+
+      // Narrow muddy forest track; subdued enough not to become the visual identity by itself.
+      ctx.strokeStyle="rgba(57,47,38,.3)";ctx.lineWidth=38;ctx.lineCap="round";
+      ctx.beginPath();ctx.moveTo(world.w*.08,world.h*.92);ctx.bezierCurveTo(world.w*.27,world.h*.76,world.w*.37,world.h*.52,world.w*.53,world.h*.56);ctx.bezierCurveTo(world.w*.72,world.h*.62,world.w*.79,world.h*.31,world.w*.93,world.h*.1);ctx.stroke();
+      ctx.strokeStyle="rgba(123,112,87,.16)";ctx.lineWidth=12;ctx.stroke();
+
+      // Fine root/twig seams break large soil areas and support the wet woodland material.
+      ctx.strokeStyle="rgba(47,37,30,.34)";ctx.lineWidth=1.8;
+      for(let i=0;i<14;i++){
+        const x=world.w*(.12+((i*19)%73)/100),y=world.h*(.16+((i*29)%69)/100);
+        ctx.beginPath();ctx.moveTo(x-20,y+4);ctx.bezierCurveTo(x-5,y-6,x+7,y+7,x+25,y-2);ctx.stroke();
+      }
+      return;
+    }
+
+    const g=ctx.createLinearGradient(0,0,0,world.h);g.addColorStop(0,"#4a5a3d");g.addColorStop(1,"#33412b");ctx.fillStyle=g;ctx.fillRect(0,0,world.w,world.h);
+    for(let i=0;i<220;i++){const x=(i*113)%world.w,y=(i*71)%world.h;ctx.fillStyle=i%2?"rgba(76,98,60,.12)":"rgba(29,49,35,.14)";ctx.beginPath();ctx.arc(x,y,2+(i%7),0,Math.PI*2);ctx.fill();}
+    ctx.strokeStyle="#6d563a";ctx.lineWidth=112;ctx.lineCap="round";ctx.beginPath();ctx.moveTo(150,1100);ctx.bezierCurveTo(500,900,520,580,890,620);ctx.bezierCurveTo(1250,660,1330,330,1660,130);ctx.stroke();ctx.strokeStyle="rgba(177,157,118,.36)";ctx.lineWidth=58;ctx.stroke();
+  }
+  function drawIrregularPavers(x0,y0,x1,y1,cellW,cellH,stroke,seed=0){
+    ctx.save();
+    ctx.strokeStyle=stroke;
+    ctx.lineWidth=1;
+    let row=0;
+    for(let y=y0;y<y1;y+=cellH,row++){
+      const yJitter=((row*7+seed)%5)-2;
+      const yy=clamp(y+yJitter,y0,y1);
+      ctx.beginPath();ctx.moveTo(x0,yy);ctx.lineTo(x1,yy);ctx.stroke();
+      let x=x0-(row%2)*cellW*.42;
+      let col=0;
+      while(x<x1){
+        const width=cellW+(((row*11+col*7+seed)%9)-4);
+        const seamX=x+width;
+        const lean=(((row*5+col*3+seed)%5)-2)*.8;
+        if(seamX>x0&&seamX<x1){
+          ctx.beginPath();
+          ctx.moveTo(seamX-lean,yy);
+          ctx.lineTo(seamX+lean,Math.min(y1,yy+cellH+2));
+          ctx.stroke();
+        }
+        x=seamX;
+        col++;
+      }
+    }
+    ctx.restore();
+  }
+
+  function drawCity(){
+    const g=ctx.createLinearGradient(0,0,0,world.h);g.addColorStop(0,"#9cb2bb");g.addColorStop(.2,"#7c8f8d");g.addColorStop(1,"#59605b");ctx.fillStyle=g;ctx.fillRect(0,0,world.w,world.h);
+    const river=ctx.createLinearGradient(0,0,420,0);river.addColorStop(0,"#245a68");river.addColorStop(1,"#4e9db0");ctx.fillStyle=river;ctx.fillRect(0,0,420,world.h);
+    for(let y=0;y<world.h;y+=32){ctx.fillStyle=y%64?"rgba(255,255,255,.08)":"rgba(184,230,234,.11)";ctx.fillRect(0,y,420,11);}
+    const waterTick=renderNow()*.032;
+    ctx.lineCap="round";ctx.lineWidth=2;
+    for(let i=0;i<24;i++){
+      const y=18+(i*53)%world.h;
+      const x=(i*97+waterTick*(1+(i%3)*.22))%470-42;
+      const width=18+(i%4)*11;
+      ctx.strokeStyle=i%3?"rgba(203,244,239,.2)":"rgba(116,215,222,.28)";
+      ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(x+width,y);ctx.stroke();
+    }
+    // Malše edge: a readable stone embankment instead of a flat grey strip.
+    ctx.fillStyle="#4d514c";ctx.fillRect(416,0,8,world.h);
+    const wall=ctx.createLinearGradient(420,0,540,0);wall.addColorStop(0,"#777970");wall.addColorStop(.45,"#96958a");wall.addColorStop(1,"#777a73");ctx.fillStyle=wall;ctx.fillRect(420,0,120,world.h);
+    ctx.fillStyle="rgba(31,43,42,.34)";ctx.fillRect(420,0,9,world.h);
+    for(let y=10,row=0;y<world.h;y+=28,row++){for(let x=428+(row%2)*18;x<536;x+=36){ctx.fillStyle=(row+Math.floor(x/36))%3===0?"rgba(218,211,190,.19)":"rgba(52,54,50,.16)";roundRect(ctx,x,y,31,20,3);ctx.fill();ctx.strokeStyle="rgba(229,224,205,.12)";ctx.lineWidth=1;ctx.stroke();}}
+    ctx.fillStyle="rgba(229,225,211,.38)";ctx.fillRect(424,0,112,5);
+    ctx.strokeStyle="rgba(43,49,46,.5)";ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(538,0);ctx.lineTo(538,world.h);ctx.stroke();
+
+    // Broken cream reflections echo the historic riverside architecture without changing gameplay geometry.
+    ctx.save();ctx.globalAlpha=.22;for(let n=0;n<13;n++){const y=92+n*55,shift=(n%3)*17;ctx.fillStyle=n%3===0?"#e7dfc7":"#c7d6cf";ctx.fillRect(58+shift,y,150-(n%4)*18,3+(n%2)*2);ctx.fillRect(245-shift*.4,y+11,105+(n%3)*16,2);}ctx.restore();
+
+    ctx.fillStyle="#d5cdb8";ctx.fillRect(540,0,340,world.h);
+    ctx.fillStyle="#beb9aa";ctx.fillRect(540,0,9,world.h);ctx.fillRect(865,0,15,world.h);
+    drawIrregularPavers(550,0,865,world.h,48,32,"rgba(102,98,83,.17)",3);
+    // Patina and repaired slabs keep the riverside from reading as a perfect tile grid.
+    for(let i=0;i<22;i++){
+      const x=565+(i*137)%285,y=38+(i*173)%Math.max(80,world.h-76);
+      ctx.fillStyle=i%3===0?"rgba(111,101,80,.08)":"rgba(244,237,213,.07)";
+      ctx.beginPath();ctx.ellipse(x,y,11+(i%4)*6,4+(i%3)*2,(i%7)*.17,0,Math.PI*2);ctx.fill();
+    }
+    ctx.fillStyle="#626667";ctx.fillRect(880,0,210,world.h);
+    ctx.strokeStyle="#ddd5ba";ctx.setLineDash([28,25]);ctx.lineWidth=3;ctx.beginPath();ctx.moveTo(985,0);ctx.lineTo(985,world.h);ctx.stroke();ctx.setLineDash([]);
+    ctx.fillStyle="#78865e";ctx.fillRect(1090,0,710,world.h);
+    for(let i=0;i<90;i++){ctx.fillStyle=i%2?"rgba(204,201,139,.12)":"rgba(40,68,42,.1)";ellipse(1110+(i*137)%690,430+(i*97)%770,25+i%19,9);}
+    ctx.strokeStyle="#cec8b6";ctx.lineWidth=65;ctx.beginPath();ctx.moveTo(1140,1200);ctx.bezierCurveTo(1320,900,1300,650,1450,440);ctx.stroke();
+    ctx.fillStyle="#c9c7bb";ctx.fillRect(1090,0,710,440);
+    drawIrregularPavers(1090,0,1800,440,44,28,"rgba(103,109,102,.2)",11);
+    ctx.strokeStyle="rgba(92,91,84,.12)";ctx.lineWidth=1.2;
+    for(let i=0;i<14;i++){
+      const x=1120+(i*193)%650,y=38+(i*97)%365;
+      ctx.beginPath();ctx.moveTo(x-18,y+2);ctx.quadraticCurveTo(x-4,y-5,x+19,y+3);ctx.stroke();
+    }
+    // Distant roofline: atmosphere rather than a second playable street.
+    for(let i=0;i<7;i++){const x=520+i*175;ctx.fillStyle="#929b91";ctx.fillRect(x,0,130,36);ctx.fillStyle="#7a7770";ctx.beginPath();ctx.moveTo(x-5,0);ctx.lineTo(x+65,-34);ctx.lineTo(x+135,0);ctx.fill();for(let wx=x+12;wx<x+125;wx+=24){ctx.fillStyle="#677c79";ctx.fillRect(wx,12,9,15);}}
+  }
+
+  const PROP_CULL_BOUNDS={
+    tree:[56,108],pine:[56,108],realpine:[52,118],bush:[42,48],fern:[32,48],grass:[24,38],stump:[30,34],log:[62,34],
+    puddle:[48,30],rock:[34,40],farm:[82,106],hut:[76,96],fieldpit:[88,64],sandpit:[88,64],minepit:[96,72],
+    soilheap:[48,42],stubble:[24,28],sandmound:[70,52],earthbank:[72,58],fallenpine:[68,46],trackscar:[70,42],
+    excavator:[122,108],plazatree:[42,82],plaza:[204,90],npc:[42,82],pit:[54,46],bench:[54,46],sign:[60,72],
+    lamp:[52,108],bridge:[132,78],slavie:[258,232]
+  };
+  function drawableExtent(kind,o){
+    if(kind==="player")return [48,92];
+    if(kind==="item")return o.type==="hole"?[72,58]:[48,58];
+    if(kind==="hotspot")return [76,64];
+    if(kind==="exit"){const r=Math.max(48,o.r||0);return [r+28,r+28];}
+    if(kind==="rival"){
+      const vision=Math.max(0,o.vision||0);
+      return [Math.max(120,vision),Math.max(140,vision)];
+    }
+    if(kind==="patrol"){
+      const scale=Math.max(.1,(o.scale||1)*(o.visualScale||1));
+      const vehicle=o.type==="tractor"||o.type==="car"||o.type==="bike";
+      const base=o.type==="tractor"?[96,78]:o.type==="car"?[54,46]:o.type==="bike"?[40,48]:[44,88];
+      const vision=Math.max(0,o.vision||0);
+      return [Math.max(base[0]*scale,vision),Math.max(base[1]*scale,vision,vehicle?64:0)];
+    }
+    const base=PROP_CULL_BOUNDS[o.type]||[92,108];
+    const scale=Math.max(.1,(o.scale||1)*(o.visualScale||1));
+    return [base[0]*scale,base[1]*scale];
+  }
+  function drawableVisible(kind,o){
+    if(world.referenceScene)return true;
+    const [rx,ry]=drawableExtent(kind,o);
+    // Extra guard covers camera easing, screen shake and anti-aliased edges without visible pop-in.
+    const guard=36;
+    return o.x+rx+guard>=camera.x&&o.x-rx-guard<=camera.x+viewport.w&&o.y+ry+guard>=camera.y&&o.y-ry-guard<=camera.y+viewport.h;
+  }
+  function queueDrawable(kind,o){
+    renderStats.candidates++;
+    if(!drawableVisible(kind,o)){renderStats.culled++;return;}
+    const index=renderQueue.length;
+    const slot=renderPool[index]||(renderPool[index]={y:0,kind:"",o:null});
+    slot.y=o.y;slot.kind=kind;slot.o=o;renderQueue.push(slot);renderStats.rendered++;
+  }
+  function drawQueuedObject(drawable){
+    if(drawable.kind==="prop")drawProp(drawable.o);
+    else if(drawable.kind==="item")drawItem(drawable.o);
+    else if(drawable.kind==="hotspot")drawHotspot(drawable.o);
+    else if(drawable.kind==="patrol")drawPatrol(drawable.o);
+    else if(drawable.kind==="rival")drawRival(drawable.o);
+    else drawPlayer();
+  }
+
+  function drawWorldObjects(){
+    renderQueue.length=0;
+    renderStats.candidates=0;
+    renderStats.rendered=0;
+    renderStats.culled=0;
+    for(const o of world.props)queueDrawable("prop",o);
+    for(const o of world.items)if(o.active&&!o.hidden)queueDrawable("item",o);
+    for(const o of world.hotspots)if(o.active&&o.revealed)queueDrawable("hotspot",o);
+    for(const o of world.patrols)if(o.active)queueDrawable("patrol",o);
+    if(world.rival?.active)queueDrawable("rival",world.rival);
+    queueDrawable("player",player);
+    renderQueue.sort((a,b)=>a.y-b.y);
+    for(const drawable of renderQueue)drawQueuedObject(drawable);
+    if(world.exit){
+      renderStats.candidates++;
+      if(drawableVisible("exit",world.exit)){renderStats.rendered++;drawExit(world.exit);}
+      else renderStats.culled++;
+    }
+  }
+
+  function drawCanopyLobe(x,y,r,isPine){
+    const skew=(((Math.abs(x)*7+Math.abs(y)*3+r*5)%11)-5)/100;
+    const light=ctx.createRadialGradient(x-r*.35,y-r*.4,2,x,y,r);
+    light.addColorStop(0,isPine?"#548058":"#709651");
+    light.addColorStop(.52,isPine?(world.theme==="night"?"#173527":"#285c39"):"#3e713d");
+    light.addColorStop(1,isPine?"#1c3d2c":"#2d5132");
+    ctx.fillStyle=light;
+    ctx.beginPath();
+    ctx.moveTo(x-r*.94,y+r*.12);
+    ctx.bezierCurveTo(x-r*(.9+skew),y-r*.34,x-r*.47,y-r*.94,x-r*.06,y-r);
+    ctx.bezierCurveTo(x+r*.43,y-r*.96,x+r*(.95-skew),y-r*.44,x+r*.9,y+r*.04);
+    ctx.bezierCurveTo(x+r*.82,y+r*.5,x+r*.4,y+r*.88,x,y+r*.79);
+    ctx.bezierCurveTo(x-r*.46,y+r*.9,x-r*.98,y+r*.53,x-r*.94,y+r*.12);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle="rgba(202,217,157,.17)";
+    ctx.lineWidth=1;
+    ctx.beginPath();
+    ctx.moveTo(x-r*.56,y-r*.17);
+    ctx.quadraticCurveTo(x-r*.15,y-r*.58,x+r*.35,y-r*.42);
+    ctx.stroke();
+  }
+
+  function drawProp(p){ctx.save();ctx.translate(p.x,p.y);const s=(p.scale||1)*(p.visualScale||1);ctx.scale(s,s);
+    if(p.type==="tree"||p.type==="pine"){
+      ctx.fillStyle="rgba(0,0,0,.25)";ellipse(0,17,35,13);
+      ctx.fillStyle="#5b4029";roundRect(ctx,-8,-12,16,48,7);ctx.fill();
+      ctx.fillStyle="rgba(206,161,99,.25)";ctx.fillRect(-6,-9,3,39);
+      // Fade only the canopy when it covers the hunter; shadows and collisions remain unchanged.
+      if(p.y>player.y){
+        const overlap=Math.hypot((player.x-p.x)/(58*s),(player.y-24-(p.y-38*s))/(84*s));
+        ctx.globalAlpha=lerp(.22,1,clamp((overlap-.35)/.65,0,1));
+      }
+      const isPine=p.type==="pine";
+      const lobes=isPine?[[0,-55,32],[0,-30,38],[0,-5,42]]:[[-16,-35,28],[14,-38,30],[0,-58,34],[0,-18,38]];
+      for(const [x,y,r] of lobes)drawCanopyLobe(x,y,r,isPine);
+      ctx.globalAlpha=1;
+    }
+    else if(p.type==="bush"){ctx.fillStyle="rgba(0,0,0,.2)";ellipse(0,12,28,10);ctx.fillStyle="#3c743c";for(const q of [[-14,-2,17],[10,-8,20],[0,-20,19]]){ctx.beginPath();ctx.arc(q[0],q[1],q[2],0,Math.PI*2);ctx.fill();}ctx.fillStyle="rgba(212,231,166,.34)";for(const q of [[-17,-6,2],[3,-19,2],[13,-8,1.7]]){ctx.beginPath();ctx.arc(q[0],q[1],q[2],0,Math.PI*2);ctx.fill();}}
+    else if(p.type==="fern"){
+      const wet=world.id==="nesmen";
+      ctx.fillStyle=wet?"rgba(0,0,0,.18)":"rgba(0,0,0,0)";if(wet){ctx.beginPath();ctx.ellipse(0,14,18,6,0,0,Math.PI*2);ctx.fill();}
+      ctx.strokeStyle=wet?"#356d43":"#2b6a3f";ctx.lineWidth=wet?2.4:3;ctx.lineCap="round";
+      for(const a of [-.9,-.58,-.28,0,.3,.6,.92]){
+        ctx.beginPath();ctx.moveTo(0,16);ctx.quadraticCurveTo(a*9,-2,a*17,-25);ctx.stroke();
+        if(wet){
+          const ex=a*12,ey=-11;ctx.strokeStyle="rgba(116,153,92,.56)";ctx.lineWidth=1.2;
+          ctx.beginPath();ctx.moveTo(ex,ey);ctx.lineTo(ex-5,ey-3);ctx.moveTo(ex,ey);ctx.lineTo(ex+5,ey-4);ctx.stroke();
+          ctx.strokeStyle="#356d43";ctx.lineWidth=2.4;
+        }
+      }
+    }
+    else if(p.type==="grass"){ctx.strokeStyle="#88a864";ctx.lineWidth=2;for(const a of [-7,-3,0,4,8]){ctx.beginPath();ctx.moveTo(a,14);ctx.quadraticCurveTo(a*.4,-2,a*1.2,-18-(Math.abs(a)%3));ctx.stroke();}}
+    else if(p.type==="stump"){ctx.fillStyle="rgba(0,0,0,.2)";ellipse(0,12,18,7);ctx.fill();ctx.fillStyle="#6d4d32";roundRect(ctx,-14,-8,28,24,6);ctx.fill();ctx.fillStyle="#c7a06a";ctx.beginPath();ctx.ellipse(0,-8,14,7,0,0,Math.PI*2);ctx.fill();ctx.strokeStyle="#8f6d45";ctx.lineWidth=2;ctx.stroke();}
+    else if(p.type==="log"){ctx.rotate(p.angle||0);ctx.fillStyle="#6a4b31";roundRect(ctx,-30,-8,60,16,7);ctx.fill();ctx.fillStyle="#5a3f2b";ctx.beginPath();ctx.arc(-24,0,7,0,Math.PI*2);ctx.arc(24,0,7,0,Math.PI*2);ctx.fill();}
+    else if(p.type==="puddle"){ctx.fillStyle="rgba(99,151,153,.46)";ellipse(0,0,p.r||28,(p.r||28)*.45);ctx.strokeStyle="rgba(214,242,238,.25)";ctx.stroke();}
+    else if(p.type==="rock"){ctx.fillStyle="rgba(0,0,0,.22)";ellipse(0,12,20,8);ctx.fillStyle="#767465";ctx.beginPath();ctx.moveTo(-18,10);ctx.lineTo(-12,-11);ctx.lineTo(5,-18);ctx.lineTo(21,1);ctx.lineTo(12,16);ctx.closePath();ctx.fill();ctx.fillStyle="rgba(227,222,185,.28)";ctx.beginPath();ctx.moveTo(-11,-9);ctx.lineTo(4,-15);ctx.lineTo(10,-7);ctx.lineTo(-4,-4);ctx.closePath();ctx.fill();}
+    else if(p.type==="farm"||p.type==="hut"){
+      const farm=p.type==="farm";
+      // Ground anchor stays unchanged; the extra side/plinth faces are visual only.
+      ctx.fillStyle="rgba(0,0,0,.27)";ctx.beginPath();ctx.ellipse(3,25,farm?64:55,farm?17:15,0,0,Math.PI*2);ctx.fill();
+
+      if(farm){
+        // Chlum farmhouse: rendered stucco + stone plinth + tile roof.
+        ctx.fillStyle="#a99f89";ctx.beginPath();ctx.moveTo(-50,15);ctx.lineTo(50,15);ctx.lineTo(58,23);ctx.lineTo(-42,23);ctx.closePath();ctx.fill();
+        ctx.fillStyle="#c9bfa4";ctx.beginPath();ctx.moveTo(48,-37);ctx.lineTo(57,-31);ctx.lineTo(57,17);ctx.lineTo(48,15);ctx.closePath();ctx.fill();
+
+        const wall=ctx.createLinearGradient(-47,-35,47,18);wall.addColorStop(0,"#ede2c7");wall.addColorStop(.58,"#d8ccb0");wall.addColorStop(1,"#c8b99b");
+        ctx.fillStyle=wall;roundRect(ctx,-49,-39,98,57,4);ctx.fill();
+        ctx.strokeStyle="rgba(116,101,76,.38)";ctx.lineWidth=1.4;ctx.stroke();
+
+        // Stone base is textural, not only darker colour.
+        ctx.fillStyle="#8e816b";ctx.fillRect(-48,10,96,9);
+        ctx.strokeStyle="rgba(229,218,190,.28)";ctx.lineWidth=1;
+        for(let x=-45;x<45;x+=14){ctx.beginPath();ctx.moveTo(x,11);ctx.lineTo(x+7,18);ctx.stroke();}
+
+        // Deep doorway: 44 visual units high, enough for the adult reference scale.
+        ctx.fillStyle="#3d3028";roundRect(ctx,-12,-26,24,45,3);ctx.fill();
+        ctx.fillStyle="#72513b";roundRect(ctx,-9,-23,18,42,2);ctx.fill();
+        ctx.strokeStyle="rgba(207,166,112,.42)";ctx.lineWidth=1.2;for(let y=-18;y<15;y+=8){ctx.beginPath();ctx.moveTo(-7,y);ctx.lineTo(7,y);ctx.stroke();}
+        ctx.fillStyle="#d1b071";ctx.beginPath();ctx.arc(5,-1,1.7,0,Math.PI*2);ctx.fill();
+
+        const farmWindow=(x)=>{
+          ctx.fillStyle="#f0e8d2";roundRect(ctx,x-12,-24,24,22,2);ctx.fill();
+          ctx.fillStyle="#78999a";roundRect(ctx,x-9,-21,18,16,1);ctx.fill();
+          ctx.strokeStyle="rgba(50,67,68,.68)";ctx.lineWidth=1.2;ctx.beginPath();ctx.moveTo(x,-21);ctx.lineTo(x,-5);ctx.moveTo(x-9,-13);ctx.lineTo(x+9,-13);ctx.stroke();
+          ctx.fillStyle="rgba(225,243,235,.22)";ctx.fillRect(x-7,-19,3,11);
+          ctx.fillStyle="#b5aa8c";ctx.fillRect(x-13,-2,26,3);
+        };
+        farmWindow(-31);farmWindow(31);
+
+        // Gable roof with an offset side plane and deterministic tile rows.
+        ctx.fillStyle="#633128";ctx.beginPath();ctx.moveTo(-60,-39);ctx.lineTo(0,-82);ctx.lineTo(61,-39);ctx.lineTo(55,-34);ctx.lineTo(0,-74);ctx.lineTo(-54,-34);ctx.closePath();ctx.fill();
+        const roof=ctx.createLinearGradient(-52,-67,50,-37);roof.addColorStop(0,"#9e4d3b");roof.addColorStop(.55,"#7c382f");roof.addColorStop(1,"#5f2d29");
+        ctx.fillStyle=roof;ctx.beginPath();ctx.moveTo(-58,-40);ctx.lineTo(0,-80);ctx.lineTo(58,-40);ctx.closePath();ctx.fill();
+        ctx.strokeStyle="rgba(239,178,128,.33)";ctx.lineWidth=1.1;
+        for(let y=-68;y<=-44;y+=7){const half=(80+y)*1.42;ctx.beginPath();ctx.moveTo(-half,y);ctx.lineTo(half,y);ctx.stroke();}
+        ctx.strokeStyle="rgba(59,31,28,.42)";for(let x=-42;x<=42;x+=14){ctx.beginPath();ctx.moveTo(x,-42);ctx.lineTo(x*.18,-76);ctx.stroke();}
+        ctx.fillStyle="#ead7af";ctx.beginPath();ctx.moveTo(-7,-39);ctx.lineTo(0,-48);ctx.lineTo(7,-39);ctx.closePath();ctx.fill();
+
+        // Subtle plaster wear; fixed geometry avoids frame-to-frame noise.
+        ctx.strokeStyle="rgba(122,103,76,.18)";ctx.lineWidth=1.2;ctx.beginPath();ctx.moveTo(-43,-6);ctx.lineTo(-29,-9);ctx.moveTo(19,4);ctx.lineTo(39,1);ctx.moveTo(-42,5);ctx.lineTo(-34,3);ctx.stroke();
+      }else{
+        // Nesměň forest hut: smaller timber construction with a lower asymmetric roof.
+        ctx.fillStyle="#504435";ctx.beginPath();ctx.moveTo(-45,15);ctx.lineTo(45,15);ctx.lineTo(51,22);ctx.lineTo(-39,22);ctx.closePath();ctx.fill();
+        ctx.fillStyle="#5b4330";roundRect(ctx,-45,-34,90,52,3);ctx.fill();
+        ctx.strokeStyle="rgba(41,31,24,.55)";ctx.lineWidth=1.6;
+        for(let y=-28;y<14;y+=8){ctx.beginPath();ctx.moveTo(-43,y);ctx.lineTo(43,y);ctx.stroke();}
+        ctx.strokeStyle="rgba(184,139,92,.28)";ctx.lineWidth=1;for(let x=-37;x<42;x+=16){ctx.beginPath();ctx.moveTo(x,-31);ctx.lineTo(x+5,15);ctx.stroke();}
+
+        // Dark timber door with a simple threshold.
+        ctx.fillStyle="#2f2923";roundRect(ctx,-11,-23,22,41,2);ctx.fill();
+        ctx.fillStyle="#67472f";roundRect(ctx,-8,-21,16,38,1);ctx.fill();
+        ctx.strokeStyle="rgba(199,151,97,.34)";ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(-6,-9);ctx.lineTo(6,-9);ctx.moveTo(-6,2);ctx.lineTo(6,2);ctx.stroke();
+        ctx.fillStyle="#c99d5e";ctx.beginPath();ctx.arc(4,-1,1.5,0,Math.PI*2);ctx.fill();
+        ctx.fillStyle="#76634d";ctx.fillRect(-14,17,28,4);
+
+        const hutWindow=(x)=>{
+          ctx.fillStyle="#312d28";roundRect(ctx,x-11,-21,22,20,2);ctx.fill();
+          ctx.fillStyle="#6e9590";roundRect(ctx,x-8,-18,16,14,1);ctx.fill();
+          ctx.strokeStyle="rgba(27,45,44,.75)";ctx.lineWidth=1.3;ctx.beginPath();ctx.moveTo(x,-18);ctx.lineTo(x,-4);ctx.moveTo(x-8,-11);ctx.lineTo(x+8,-11);ctx.stroke();
+        };
+        hutWindow(-28);hutWindow(28);
+
+        ctx.fillStyle="#3f352c";ctx.beginPath();ctx.moveTo(-52,-35);ctx.lineTo(-13,-67);ctx.lineTo(55,-47);ctx.lineTo(48,-34);ctx.closePath();ctx.fill();
+        const hutRoof=ctx.createLinearGradient(-44,-60,48,-35);hutRoof.addColorStop(0,"#655141");hutRoof.addColorStop(1,"#3d342e");
+        ctx.fillStyle=hutRoof;ctx.beginPath();ctx.moveTo(-51,-36);ctx.lineTo(-12,-65);ctx.lineTo(54,-46);ctx.lineTo(47,-35);ctx.closePath();ctx.fill();
+        ctx.strokeStyle="rgba(181,153,119,.24)";ctx.lineWidth=1.2;for(let x=-38;x<45;x+=13){ctx.beginPath();ctx.moveTo(x,-39);ctx.lineTo(x*.45-5,-58);ctx.stroke();}
+        // Small chimney gives the hut a different silhouette from the farmhouse.
+        ctx.fillStyle="#4a433b";roundRect(ctx,22,-60,10,24,2);ctx.fill();ctx.fillStyle="#2f2d29";ctx.fillRect(20,-61,14,4);
+      }
+    }
+    else if(p.type==="fieldpit"||p.type==="sandpit"||p.type==="minepit"){
+      ctx.rotate(p.angle||0);const w=p.w||110,h=p.h||58;
+      const palette=p.type==="sandpit"?{lip:"#d8c39a",wall:"#9d8861",deep:"#574d40",line:"#f2debb",material:"sand"}:p.type==="minepit"?{lip:"#8e684d",wall:"#604738",deep:"#17110e",line:"#c49567",material:"dark"}:{lip:"#b48858",wall:"#805a3a",deep:"#2a1d14",line:"#d9ad76",material:"field"};
+      drawExcavationProfile(w,p.type==="minepit"?h*1.12:h,p.x+p.y,palette);
+      if(p.type==="minepit"){
+        // Additional dark core and rim chips read as a deeper disturbed quarry profile.
+        ctx.fillStyle="rgba(10,8,7,.2)";organicPitPath(ctx,w*.48,h*.28,p.x-p.y+203,.1);ctx.fill();
+        for(let n=0;n<8;n++){const a=n/8*Math.PI*2+(p.x%17)*.04,x=Math.cos(a)*w*.53,y=Math.sin(a)*h*.48;ctx.fillStyle=n%2?"#725744":"#ae8158";ctx.beginPath();ctx.moveTo(x-4,y+2);ctx.lineTo(x,y-4);ctx.lineTo(x+5,y+1);ctx.lineTo(x+1,y+4);ctx.closePath();ctx.fill();}
+      }
+    }
+    else if(p.type==="soilheap"){ctx.fillStyle="rgba(0,0,0,.2)";ctx.beginPath();ctx.ellipse(0,12,35,10,0,0,Math.PI*2);ctx.fill();ctx.fillStyle="#886747";ctx.beginPath();ctx.moveTo(-36,12);ctx.quadraticCurveTo(-12,-22,0,-12);ctx.quadraticCurveTo(18,-28,39,12);ctx.closePath();ctx.fill();ctx.fillStyle="rgba(188,151,100,.26)";ctx.beginPath();ctx.arc(-8,-4,5,0,Math.PI*2);ctx.arc(12,-7,4,0,Math.PI*2);ctx.fill();}
+    else if(p.type==="stubble"){ctx.strokeStyle="#b7a271";ctx.lineWidth=2;for(let i=-4;i<=4;i+=2){ctx.beginPath();ctx.moveTo(i,9);ctx.lineTo(i-2,-9-(i%3));ctx.stroke();}}
+    else if(p.type==="realpine"){
+      ctx.rotate(p.lean||0);const loc=world.id==="locenice",variant=p.variant||0;
+      if(loc){
+        // Needle mat and exposed roots stay visual-only; no collision is attached to props.
+        ctx.fillStyle="rgba(103,73,45,.18)";ctx.beginPath();ctx.ellipse(0,13,27+variant*3,10,0,0,Math.PI*2);ctx.fill();
+        ctx.strokeStyle="rgba(119,81,48,.4)";ctx.lineWidth=1.4;ctx.lineCap="round";
+        for(let n=0;n<8;n++){const a=-1.2+n*.34,r=11+(n%3)*5;ctx.beginPath();ctx.moveTo(Math.cos(a)*4,12+Math.sin(a)*2);ctx.lineTo(Math.cos(a)*r,12+Math.sin(a)*r*.35);ctx.stroke();}
+        if(p.rooted){
+          ctx.strokeStyle="rgba(105,69,43,.56)";ctx.lineWidth=2.5;
+          for(const a of [-2.8,-2.25,-.45,.15]){ctx.beginPath();ctx.moveTo(Math.cos(a)*3,13);ctx.bezierCurveTo(Math.cos(a)*10,13+Math.sin(a)*4,Math.cos(a)*19,15+Math.sin(a)*8,Math.cos(a)*29,17+Math.sin(a)*10);ctx.stroke();}
+          ctx.strokeStyle="rgba(208,170,112,.24)";ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(-25,17);ctx.quadraticCurveTo(-13,11,-3,14);ctx.stroke();
+        }
+      }
+      ctx.fillStyle="rgba(0,0,0,.2)";ctx.beginPath();ctx.ellipse(0,16,18,7,0,0,Math.PI*2);ctx.fill();
+      const bark=ctx.createLinearGradient(-5,0,5,0);bark.addColorStop(0,loc?"#6f4934":"#774b32");bark.addColorStop(.5,loc?"#9a6441":"#8a5738");bark.addColorStop(1,loc?"#5d3c2d":"#6f432d");
+      ctx.fillStyle=bark;roundRect(ctx,-4,-58,8,78,3);ctx.fill();
+      ctx.strokeStyle=loc?"rgba(205,142,83,.32)":"rgba(201,126,74,.3)";ctx.lineWidth=1;for(let y=-48;y<12;y+=13){ctx.beginPath();ctx.moveTo(-2,y);ctx.lineTo(3,y+4);ctx.stroke();}
+      const col=loc?(variant===1?"#516b4e":variant===2?"#405d43":"#49634a"):"#2d5236";
+      const crowns=loc?[[0,-78,17+variant],[0,-58,22],[0,-40,19]]:[[0,-72,20],[0,-55,24],[0,-38,21]];
+      ctx.fillStyle=col;for(const q of crowns){ctx.beginPath();ctx.moveTo(0,q[1]-q[2]);ctx.lineTo(-q[2],q[1]+q[2]);ctx.lineTo(q[2],q[1]+q[2]);ctx.closePath();ctx.fill();}
+      if(loc){ctx.strokeStyle="rgba(180,205,163,.14)";ctx.lineWidth=1;for(const q of crowns){ctx.beginPath();ctx.moveTo(0,q[1]-q[2]+4);ctx.lineTo(-q[2]*.78,q[1]+q[2]*.72);ctx.stroke();}}
+    }
+    else if(p.type==="sandmound"||p.type==="earthbank"){
+      ctx.rotate(p.angle||0);ctx.fillStyle="rgba(0,0,0,.2)";ctx.beginPath();ctx.ellipse(0,15,54,14,0,0,Math.PI*2);ctx.fill();
+      if(p.type==="sandmound"){
+        ctx.fillStyle="#c7b38a";ctx.beginPath();ctx.moveTo(-55,15);ctx.quadraticCurveTo(-20,-25,0,-15);ctx.quadraticCurveTo(30,-32,58,15);ctx.closePath();ctx.fill();
+        ctx.strokeStyle="rgba(238,220,177,.45)";ctx.lineWidth=3;ctx.stroke();
+      }else{
+        const bank=ctx.createLinearGradient(0,-28,0,18);bank.addColorStop(0,"#aa815b");bank.addColorStop(.45,"#856247");bank.addColorStop(1,"#5f493a");
+        ctx.fillStyle=bank;ctx.beginPath();ctx.moveTo(-57,15);ctx.lineTo(-45,-4);ctx.lineTo(-18,-25);ctx.lineTo(9,-17);ctx.lineTo(29,-29);ctx.lineTo(58,14);ctx.closePath();ctx.fill();
+        // Three visible material bands give the bank a cut geological face.
+        for(const q of [[-44,-2,44,-9],[ -48,7,48,1],[-38,13,43,10]]){
+          ctx.strokeStyle=q[1]<0?"rgba(218,178,126,.42)":"rgba(69,49,39,.48)";ctx.lineWidth=2;
+          ctx.beginPath();ctx.moveTo(q[0],q[1]);ctx.quadraticCurveTo(0,q[1]-4,q[2],q[3]);ctx.stroke();
+        }
+        ctx.fillStyle="rgba(213,179,130,.33)";for(const q of [[-32,-10,4],[13,-15,5],[34,4,3],[-9,4,3]]){ctx.beginPath();ctx.ellipse(q[0],q[1],q[2],q[2]*.55,.2,0,Math.PI*2);ctx.fill();}
+      }
+    }
+    else if(p.type==="fallenpine"){ctx.rotate(p.angle||0);ctx.fillStyle="#8b5737";roundRect(ctx,-50,-5,100,10,5);ctx.fill();ctx.strokeStyle="#385b3f";ctx.lineWidth=3;for(let x=-35;x<45;x+=16){ctx.beginPath();ctx.moveTo(x,0);ctx.lineTo(x-8,-15);ctx.moveTo(x+5,0);ctx.lineTo(x+12,13);ctx.stroke();}}
+    else if(p.type==="trackscar"){ctx.rotate(p.angle||0);ctx.strokeStyle="rgba(68,48,34,.55)";ctx.lineWidth=5;for(const y of [-10,10]){ctx.beginPath();ctx.moveTo(-55,y);ctx.lineTo(55,y);ctx.stroke();for(let x=-48;x<50;x+=14){ctx.beginPath();ctx.moveTo(x,y-4);ctx.lineTo(x+7,y+4);ctx.stroke();}}}
+    else if(p.type==="excavator"){
+      const baseAngle=p.angle||0,upperAngle=Number.isFinite(p.turretAngle)?p.turretAngle:0;
+      const phase=Number.isFinite(p.workPhase)?p.workPhase:0,activity=clamp(Number.isFinite(p.workSpeed)?p.workSpeed:0,0,1);
+      const variant=p.variant||0;
+      const boomAngle=-.57+Math.sin(phase)*.18*activity;
+      const stickAngle=.72+Math.sin(phase-1.18)*.28*activity;
+      const bucketAngle=-.48+Math.sin(phase-2.0)*.34*activity;
+
+      ctx.rotate(baseAngle);
+      // Tracks and contact shadow are fixed: this PR animates work, not vehicle travel.
+      ctx.fillStyle="rgba(0,0,0,.3)";ctx.beginPath();ctx.ellipse(1,25,64,18,0,0,Math.PI*2);ctx.fill();
+      ctx.fillStyle="#2c2d2a";roundRect(ctx,-48,6,92,22,9);ctx.fill();
+      ctx.strokeStyle="#55544d";ctx.lineWidth=3.5;
+      for(let x=-40;x<38;x+=13){ctx.beginPath();ctx.moveTo(x,9);ctx.lineTo(x+8,25);ctx.stroke();}
+      ctx.strokeStyle="rgba(203,190,154,.17)";ctx.lineWidth=1.2;roundRect(ctx,-44,9,84,15,6);ctx.stroke();
+      ctx.fillStyle="#67645a";ctx.beginPath();ctx.arc(0,4,11,0,Math.PI*2);ctx.fill();
+
+      ctx.save();ctx.rotate(upperAngle);
+      // Counterweight and engine housing establish readable mass behind the cab.
+      ctx.fillStyle=variant===1?"#c99526":"#d5a42c";roundRect(ctx,-37,-23,64,34,10);ctx.fill();
+      ctx.fillStyle="#ac7e22";roundRect(ctx,-39,-17,20,23,8);ctx.fill();
+      ctx.strokeStyle="rgba(255,225,137,.28)";ctx.lineWidth=1.4;ctx.beginPath();ctx.moveTo(-29,-18);ctx.lineTo(18,-18);ctx.stroke();
+      ctx.fillStyle="#6b5428";for(let y=-13;y<5;y+=5)ctx.fillRect(-34,y,12,2);
+
+      // Cab uses a separate dark frame and glass material.
+      ctx.fillStyle="#28363b";roundRect(ctx,-2,-43,31,36,5);ctx.fill();
+      const glass=ctx.createLinearGradient(2,-40,25,-10);glass.addColorStop(0,"rgba(209,235,234,.62)");glass.addColorStop(1,"rgba(80,116,125,.35)");
+      ctx.fillStyle=glass;roundRect(ctx,2,-39,22,23,3);ctx.fill();
+      ctx.strokeStyle="rgba(10,24,28,.7)";ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(13,-39);ctx.lineTo(13,-16);ctx.stroke();
+      ctx.fillStyle="rgba(244,233,191,.16)";ctx.fillRect(4,-36,3,16);
+
+      // Boom hierarchy: each child inherits the real joint transform.
+      ctx.save();ctx.translate(22,-13);ctx.rotate(boomAngle);
+      const boom=ctx.createLinearGradient(0,-7,54,7);boom.addColorStop(0,"#dba92e");boom.addColorStop(.55,"#c99726");boom.addColorStop(1,"#aa7720");
+      ctx.fillStyle=boom;ctx.beginPath();ctx.moveTo(-2,-7);ctx.lineTo(48,-5);ctx.lineTo(55,3);ctx.lineTo(5,8);ctx.closePath();ctx.fill();
+      ctx.strokeStyle="rgba(255,226,136,.32)";ctx.lineWidth=1.3;ctx.beginPath();ctx.moveTo(4,-4);ctx.lineTo(43,-3);ctx.stroke();
+      ctx.fillStyle="#5e5b52";ctx.beginPath();ctx.arc(0,0,6,0,Math.PI*2);ctx.fill();
+
+      // Hydraulic boom cylinder.
+      ctx.strokeStyle="#4b4a45";ctx.lineWidth=5;ctx.beginPath();ctx.moveTo(4,7);ctx.lineTo(34,8);ctx.stroke();
+      ctx.strokeStyle="#c8c7bd";ctx.lineWidth=2.4;ctx.beginPath();ctx.moveTo(12,7);ctx.lineTo(42,2);ctx.stroke();
+
+      ctx.translate(50,0);ctx.rotate(stickAngle);
+      ctx.fillStyle="#c89527";roundRect(ctx,-4,-6,45,12,5);ctx.fill();
+      ctx.strokeStyle="rgba(255,226,136,.25)";ctx.lineWidth=1.2;ctx.beginPath();ctx.moveTo(2,-3);ctx.lineTo(35,-3);ctx.stroke();
+      ctx.fillStyle="#5c5a52";ctx.beginPath();ctx.arc(0,0,5,0,Math.PI*2);ctx.fill();
+
+      // Stick cylinder moves with the articulated arm.
+      ctx.strokeStyle="#4a4943";ctx.lineWidth=4;ctx.beginPath();ctx.moveTo(2,6);ctx.lineTo(30,10);ctx.stroke();
+      ctx.strokeStyle="#c9c8bf";ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(11,7);ctx.lineTo(38,3);ctx.stroke();
+
+      ctx.translate(38,0);ctx.rotate(bucketAngle);
+      ctx.fillStyle="#6b5535";ctx.beginPath();ctx.moveTo(-4,-8);ctx.lineTo(22,-4);ctx.lineTo(30,7);ctx.lineTo(15,16);ctx.lineTo(-4,9);ctx.closePath();ctx.fill();
+      ctx.strokeStyle="#9b7c4d";ctx.lineWidth=2;ctx.stroke();
+      ctx.fillStyle="#45392a";for(const x of [17,23,29]){ctx.beginPath();ctx.moveTo(x,7);ctx.lineTo(x+5,12);ctx.lineTo(x,12);ctx.closePath();ctx.fill();}
+
+      // Soil leaves the bucket only during the lower half of an active work cycle.
+      const scoop=Math.max(0,Math.sin(phase-1.55))*activity;
+      if(scoop>.18){
+        ctx.fillStyle=`rgba(92,65,44,${.18+scoop*.3})`;
+        for(let n=0;n<5;n++){const x=12+n*5,y=18+n%2*3+scoop*5;ctx.beginPath();ctx.ellipse(x,y,2.4+n%2,1.5,0,0,Math.PI*2);ctx.fill();}
+      }
+      ctx.restore();
+
+      // Turn indicator is subtle wear/light on the rotating deck, not a UI marker.
+      if((p.turnAmount||0)>.06){ctx.strokeStyle=`rgba(238,206,119,${.12+(p.turnAmount||0)*.18})`;ctx.lineWidth=1.4;ctx.beginPath();ctx.arc(0,2,17,-.6,.6);ctx.stroke();}
+      ctx.restore();
+    }
+    else if(p.type==="plazatree"){ctx.fillStyle="rgba(0,0,0,.16)";ctx.beginPath();ctx.ellipse(0,15,24,8,0,0,Math.PI*2);ctx.fill();ctx.fillStyle="#6a5140";ctx.fillRect(-4,-32,8,50);ctx.fillStyle="#507044";for(const q of [[-12,-35,18],[12,-38,20],[0,-55,22]]){ctx.beginPath();ctx.arc(q[0],q[1],q[2],0,Math.PI*2);ctx.fill();}}
+    else if(p.type==="plaza"){ctx.fillStyle="rgba(232,233,228,.5)";roundRect(ctx,-190,-70,380,140,16);ctx.fill();for(let i=-160;i<=160;i+=40){ctx.strokeStyle="rgba(110,115,112,.18)";ctx.beginPath();ctx.moveTo(i,-70);ctx.lineTo(i,70);ctx.stroke();}for(let i=0;i<8;i++){const x=-140+i*40;ctx.fillStyle=i%2?"#48535c":"#7a6a5d";ctx.beginPath();ctx.arc(x,5+(i%3)*10,5,0,Math.PI*2);ctx.fill();}}
+    else if(p.type==="npc")drawActor(0,0,p.role==="owner"?"ranger":"farmer",0,p.name,true,{pose:"front",facing:1,moving:false,motionRatio:0,motionPhase:0});
+    else if(p.type==="pit"){const r=p.r||28;drawExcavationProfile(r*2,r*1.1,p.x+p.y,{lip:"#a27a4f",wall:"#775035",deep:"#251b14",line:"#d0ad7d"});}
+    else if(p.type==="bench"){
+      ctx.fillStyle="rgba(0,0,0,.24)";ctx.beginPath();ctx.ellipse(0,15,43,10,0,0,Math.PI*2);ctx.fill();
+      ctx.strokeStyle="#3d403e";ctx.lineWidth=4;ctx.lineCap="round";
+      ctx.beginPath();ctx.moveTo(-31,4);ctx.lineTo(-31,18);ctx.lineTo(-25,23);ctx.moveTo(31,4);ctx.lineTo(31,18);ctx.lineTo(25,23);ctx.stroke();
+      ctx.strokeStyle="#50534f";ctx.lineWidth=3;ctx.beginPath();ctx.moveTo(-34,-19);ctx.lineTo(-34,10);ctx.moveTo(34,-19);ctx.lineTo(34,10);ctx.stroke();
+      const wood=ctx.createLinearGradient(-38,-18,38,12);wood.addColorStop(0,"#a87345");wood.addColorStop(.5,"#825633");wood.addColorStop(1,"#684329");
+      ctx.fillStyle=wood;
+      for(const y of [-18,-9,0]){roundRect(ctx,-38,y,76,6,2);ctx.fill();}
+      for(const y of [7,14]){roundRect(ctx,-39,y,78,6,2);ctx.fill();}
+      ctx.strokeStyle="rgba(229,184,127,.32)";ctx.lineWidth=1;
+      for(const y of [-17,-8,1,8,15]){ctx.beginPath();ctx.moveTo(-34,y);ctx.lineTo(33,y);ctx.stroke();}
+      ctx.strokeStyle="rgba(54,36,25,.34)";ctx.beginPath();ctx.moveTo(-12,-16);ctx.lineTo(-4,-13);ctx.moveTo(16,9);ctx.lineTo(27,11);ctx.stroke();
+    }
+    else if(p.type==="sign"){
+      ctx.save();ctx.scale(1.12,1.12);
+      ctx.fillStyle="rgba(0,0,0,.2)";ctx.beginPath();ctx.ellipse(1,21,24,7,0,0,Math.PI*2);ctx.fill();
+      ctx.fillStyle="#56402d";roundRect(ctx,-5,-31,10,53,3);ctx.fill();
+      ctx.fillStyle="#82603c";ctx.fillRect(-2,-28,3,45);
+      ctx.fillStyle="#5c4633";roundRect(ctx,-46,-55,92,33,6);ctx.fill();
+      const board=ctx.createLinearGradient(-40,-51,40,-26);board.addColorStop(0,"#e5d8b8");board.addColorStop(.55,"#cdbd98");board.addColorStop(1,"#b7a57e");
+      ctx.fillStyle=board;roundRect(ctx,-42,-51,84,25,3);ctx.fill();
+      ctx.strokeStyle="rgba(255,244,211,.46)";ctx.lineWidth=1.2;ctx.stroke();
+      ctx.strokeStyle="rgba(96,76,51,.22)";ctx.beginPath();ctx.moveTo(-35,-46);ctx.lineTo(-20,-44);ctx.moveTo(18,-33);ctx.lineTo(34,-35);ctx.stroke();
+      const label=String(p.text||"");
+      let fs=10;ctx.textAlign="center";ctx.textBaseline="middle";
+      do{ctx.font=`bold ${fs}px sans-serif`;if(ctx.measureText(label).width<=74||fs<=6)break;fs-=1;}while(fs>5);
+      ctx.fillStyle="#3c3328";ctx.fillText(label,0,-38);
+      ctx.restore();
+    }
+    else if(p.type==="lamp"){
+      ctx.save();ctx.scale(1.48,1.48);
+      ctx.fillStyle="rgba(0,0,0,.2)";ctx.beginPath();ctx.ellipse(2,16,12,5,0,0,Math.PI*2);ctx.fill();
+      ctx.fillStyle="#4b5050";roundRect(ctx,-7,10,14,8,3);ctx.fill();
+      const pole=ctx.createLinearGradient(-4,0,4,0);pole.addColorStop(0,"#252c2e");pole.addColorStop(.5,"#515b5c");pole.addColorStop(1,"#252b2d");
+      ctx.fillStyle=pole;roundRect(ctx,-3,-55,6,69,2);ctx.fill();
+      ctx.strokeStyle="rgba(202,218,207,.22)";ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(-1,-50);ctx.lineTo(-1,7);ctx.stroke();
+      ctx.fillStyle="#30383a";roundRect(ctx,-10,-65,20,9,4);ctx.fill();
+      ctx.fillStyle="#697575";roundRect(ctx,-7,-63,14,5,2);ctx.fill();
+      const glow=ctx.createRadialGradient(0,-61,3,0,-61,27);glow.addColorStop(0,"rgba(255,232,158,.25)");glow.addColorStop(1,"rgba(255,224,142,0)");
+      ctx.fillStyle=glow;ctx.beginPath();ctx.arc(0,-61,27,0,Math.PI*2);ctx.fill();
+      ctx.fillStyle="#ffe7a2";ctx.beginPath();ctx.ellipse(0,-61,6,4,0,0,Math.PI*2);ctx.fill();
+      ctx.strokeStyle="rgba(229,235,210,.65)";ctx.lineWidth=1.2;ctx.stroke();
+      ctx.restore();
+    }
+    else if(p.type==="bridge"){ctx.fillStyle="#4f6f78";roundRect(ctx,-115,-28,230,56,16);ctx.fill();ctx.strokeStyle="#a8cad0";ctx.lineWidth=4;ctx.beginPath();ctx.arc(0,25,105,Math.PI,0);ctx.stroke();}
+    else if(p.type==="slavie"){
+      // Photo references and deliberate map simplifications: docs/slavie-reference.md.
+      // Historic KD Slavie / former Deutsches Haus: simplified for the top-down game map,
+      // but preserving the protected Neo-Renaissance frontage's defining proportions.
+      ctx.fillStyle="rgba(0,0,0,.28)";ctx.beginPath();ctx.ellipse(0,77,238,31,0,0,Math.PI*2);ctx.fill();
+      ctx.save();ctx.translate(0,70);ctx.scale(1,.68);ctx.translate(0,-70);
+
+      // Lower side wings and their darker roofs keep the central pediment dominant.
+      ctx.fillStyle="#4e4d46";ctx.beginPath();ctx.moveTo(-242,-100);ctx.lineTo(-174,-126);ctx.lineTo(-174,-88);ctx.lineTo(-242,-72);ctx.closePath();ctx.fill();
+      ctx.beginPath();ctx.moveTo(242,-100);ctx.lineTo(174,-126);ctx.lineTo(174,-88);ctx.lineTo(242,-72);ctx.closePath();ctx.fill();
+      ctx.fillStyle="#cfc6aa";roundRect(ctx,-242,-92,68,148,3);ctx.fill();roundRect(ctx,174,-92,68,148,3);ctx.fill();
+
+      // Main three-level historic body.
+      const plaster=ctx.createLinearGradient(-180,-150,180,58);plaster.addColorStop(0,"#efe6ca");plaster.addColorStop(.52,"#ddd3b7");plaster.addColorStop(1,"#c9bea3");
+      ctx.fillStyle=plaster;roundRect(ctx,-178,-151,356,209,3);ctx.fill();
+      ctx.strokeStyle="#a79c82";ctx.lineWidth=2;ctx.stroke();
+
+      // Ground-floor rustication and strong horizontal cornices.
+      ctx.strokeStyle="rgba(129,118,95,.38)";ctx.lineWidth=1.2;
+      for(let y=-48;y<51;y+=16){ctx.beginPath();ctx.moveTo(-176,y);ctx.lineTo(176,y);ctx.stroke();}
+      for(let x=-168;x<=168;x+=28){ctx.beginPath();ctx.moveTo(x,-48);ctx.lineTo(x+((Math.floor(x/28)&1)?8:-8),-32);ctx.stroke();}
+      ctx.fillStyle="#b8ad91";ctx.fillRect(-184,-55,368,8);ctx.fillRect(-184,-116,368,7);ctx.fillRect(-188,53,376,8);
+      ctx.fillStyle="#f4ecd4";ctx.fillRect(-184,-58,368,3);ctx.fillRect(-184,-119,368,3);
+
+      const archWindow=(x,y,w,h,door=false)=>{
+        ctx.save();ctx.translate(x,y);
+        ctx.fillStyle=door?"#47372e":"#40535b";
+        ctx.beginPath();ctx.moveTo(-w/2,h/2);ctx.lineTo(-w/2,-h/2+w/2);ctx.arc(0,-h/2+w/2,w/2,Math.PI,0);ctx.lineTo(w/2,h/2);ctx.closePath();ctx.fill();
+        ctx.strokeStyle="rgba(246,238,216,.72)";ctx.lineWidth=2;ctx.stroke();
+        if(!door){ctx.strokeStyle="rgba(196,218,214,.36)";ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(0,-h/2+w/2);ctx.lineTo(0,h/2);ctx.moveTo(-w/2+3,3);ctx.lineTo(w/2-3,3);ctx.stroke();}
+        else{ctx.fillStyle="#8e7459";ctx.beginPath();ctx.arc(5,h*.18,1.7,0,Math.PI*2);ctx.fill();}
+        ctx.restore();
+      };
+      const bays=[-138,-92,-46,0,46,92,138];
+
+      // Tall arched first-floor windows, rhythmically divided by pilasters.
+      for(const x of bays)archWindow(x,-82,19,35,false);
+      ctx.fillStyle="#c0b498";for(const x of [-160,-115,-69,-23,23,69,115,160]){roundRect(ctx,x-3,-112,6,57,2);ctx.fill();ctx.fillStyle="#f1e6c8";ctx.fillRect(x-4,-112,8,4);ctx.fillRect(x-4,-59,8,4);ctx.fillStyle="#c0b498";}
+
+      // Small rectangular upper windows below the pediment.
+      for(const x of bays){ctx.fillStyle="#43575d";roundRect(ctx,x-8,-140,16,17,2);ctx.fill();ctx.strokeStyle="rgba(245,237,215,.75)";ctx.lineWidth=1.5;ctx.stroke();ctx.strokeStyle="rgba(201,221,215,.28)";ctx.beginPath();ctx.moveTo(x,-139);ctx.lineTo(x,-124);ctx.stroke();}
+
+      // Ground arches with the characteristic three central entrance doors.
+      for(const x of [-138,-92,92,138])archWindow(x,15,20,38,false);
+      archWindow(-42,13,22,44,true);archWindow(0,13,22,46,true);archWindow(42,13,22,44,true);
+
+      // Moulded window surrounds and voussoir hints keep the facade readable without photo textures.
+      ctx.strokeStyle="rgba(126,112,88,.5)";ctx.lineWidth=2;
+      for(const x of [-138,-92,92,138]){ctx.beginPath();ctx.arc(x,-4,14,Math.PI,0);ctx.stroke();}
+      for(const x of [-42,0,42]){ctx.beginPath();ctx.arc(x,-8,15,Math.PI,0);ctx.stroke();}
+
+      // Central triangular pediment with circular oculus: the key silhouette from the real building.
+      ctx.fillStyle="#e8dfc3";ctx.beginPath();ctx.moveTo(-181,-151);ctx.lineTo(0,-221);ctx.lineTo(181,-151);ctx.closePath();ctx.fill();
+      ctx.strokeStyle="#a79b80";ctx.lineWidth=3;ctx.stroke();
+      ctx.strokeStyle="#f5edd4";ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(-160,-155);ctx.lineTo(0,-211);ctx.lineTo(160,-155);ctx.stroke();
+      ctx.fillStyle="#43565b";ctx.beginPath();ctx.arc(0,-181,13,0,Math.PI*2);ctx.fill();ctx.strokeStyle="#b4a88c";ctx.lineWidth=5;ctx.stroke();ctx.strokeStyle="rgba(243,234,209,.75)";ctx.lineWidth=2;ctx.stroke();
+
+      // Side-wing windows.
+      for(const sx of [-208,208]){archWindow(sx,-50,18,32,false);archWindow(sx,4,18,34,false);}
+
+      // Restrained event banner: promotional identity is present but no longer replaces the architecture.
+      ctx.fillStyle="#2f6b4d";roundRect(ctx,-66,36,132,17,4);ctx.fill();ctx.strokeStyle="rgba(224,244,226,.45)";ctx.lineWidth=1;ctx.stroke();
+      ctx.fillStyle="#eff7ec";ctx.font="bold 9px sans-serif";ctx.textAlign="center";ctx.fillText("NA ZELENÉ VLNĚ",0,48);
+
+      // Plinth and small step tie the facade to the plaza.
+      ctx.fillStyle="#d6cdb4";ctx.beginPath();ctx.moveTo(-190,58);ctx.lineTo(190,58);ctx.lineTo(205,70);ctx.lineTo(-205,70);ctx.closePath();ctx.fill();
+      ctx.strokeStyle="rgba(118,110,94,.35)";ctx.lineWidth=1.5;ctx.beginPath();ctx.moveTo(-205,70);ctx.lineTo(205,70);ctx.stroke();
+      ctx.restore();
+
+    }
+    ctx.restore();
+  }
+
+  function drawHumanoidContactShadow(side,motionRatio=0){
+    ctx.fillStyle="rgba(0,0,0,.24)";
+    ctx.beginPath();
+    ctx.ellipse(0,16,side?17:20,8-Math.min(1,motionRatio),0,0,Math.PI*2);
+    ctx.fill();
+  }
+
+  function drawActor(x,y,type,angle=0,name="",local=false,motion=null){
+    ctx.save();if(!local)ctx.translate(x,y);
+    const styles={
+      farmer:{coat:"#8a6a48",trim:"#be9864",pants:"#314049",skin:"#cb946e",hair:"#6d5232",hat:"#8d7449",accent:"#d5c29e"},
+      ranger:{coat:"#446749",trim:"#78a06e",pants:"#2a3940",skin:"#c9936d",hair:"#33412f",hat:"#223628",accent:"#dbe7cf"},
+      police:{coat:"#355f88",trim:"#5e8fbe",pants:"#273742",skin:"#cb9470",hair:"#24394d",hat:"#21384b",accent:"#d7e9f8"},
+      digger:{coat:"#6e3a35",trim:"#ad6659",pants:"#352a30",skin:"#bb815e",hair:"#302624",hat:"#2b2524",accent:"#efd1b8"},
+      rival:{coat:"#764840",trim:"#bf8374",pants:"#38292b",skin:"#c28964",hair:"#302624",hat:"#2b2524",accent:"#ffd7c9"},
+      player:{coat:"#55966a",trim:"#a5ddb8",pants:"#30434c",skin:"#d49d78",hair:"#183526",hat:"#215239",accent:"#f5fff8"}
+    };
+    const s=styles[type]||styles.farmer;
+    const fallbackDx=Math.cos(angle||0),fallbackDy=Math.sin(angle||0);
+    const pose=motion?.pose||(local&&!motion?"front":Math.abs(fallbackDy)>.66?(fallbackDy<0?"back":"front"):"side");
+    const facing=motion?.facing===-1?-1:motion?.facing===1?1:(fallbackDx<0?-1:1);
+    const moving=motion?.moving===true;
+    const motionRatio=moving?clamp(Number.isFinite(motion?.motionRatio)?motion.motionRatio:.65,0,1):0;
+    const phase=Number.isFinite(motion?.motionPhase)?motion.motionPhase:renderNow()*.008+(x+y)*.002;
+    const side=pose==="side",back=pose==="back";
+    ctx.scale(facing,1);
+
+    // Human characters stay upright. Direction is expressed with front/back/side poses
+    // and horizontal mirroring, exactly like the player; only vehicles rotate in world space.
+    const walk=moving?Math.sin(phase*1.1)*(.35+.65*motionRatio):0;
+    const bob=moving?Math.abs(walk)*1.5:Math.sin(renderNow()*.002+(x+y)*.001)*.35;
+    const arm=walk*5.2,leg=walk*4.6;
+    const hipSpread=side?3:5;
+    drawHumanoidContactShadow(side,motionRatio);
+    ctx.translate(0,-bob);
+
+    ctx.strokeStyle=s.pants;ctx.lineWidth=8;ctx.lineCap="round";ctx.beginPath();
+    ctx.moveTo(-hipSpread,0);ctx.lineTo(-hipSpread-3+leg,21);
+    ctx.moveTo(hipSpread,0);ctx.lineTo(hipSpread+3-leg,21);ctx.stroke();
+    ctx.strokeStyle="#1f2529";ctx.lineWidth=5;ctx.beginPath();
+    ctx.moveTo(-hipSpread-3+leg,21);ctx.lineTo(-hipSpread-5+leg,24);
+    ctx.moveTo(hipSpread+3-leg,21);ctx.lineTo(hipSpread+5-leg,24);ctx.stroke();
+
+    ctx.fillStyle=s.coat;roundRect(ctx,side?-13:-16,-28,side?26:32,34,10);ctx.fill();
+    if(back){
+      ctx.fillStyle=s.trim;roundRect(ctx,side?-10:-12,-24,side?20:24,23,7);ctx.fill();
+      ctx.strokeStyle="rgba(245,238,212,.28)";ctx.lineWidth=1.4;ctx.beginPath();ctx.moveTo(-9,-22);ctx.lineTo(9,1);ctx.moveTo(9,-22);ctx.lineTo(-9,1);ctx.stroke();
+    }else{
+      ctx.fillStyle=s.trim;roundRect(ctx,side?-9:-12,-24,side?18:24,20,8);ctx.fill();
+      ctx.fillStyle=s.accent;roundRect(ctx,-4,-24,8,30,4);ctx.fill();
+      ctx.strokeStyle="rgba(245,238,212,.34)";ctx.lineWidth=1.2;ctx.beginPath();ctx.moveTo(side?-8:-11,-22);ctx.lineTo(side?-8:-11,-1);ctx.moveTo(side?8:11,-22);ctx.lineTo(side?8:11,-1);ctx.stroke();
+      ctx.fillStyle=s.accent;roundRect(ctx,side?-9:-12,-8,7,7,2);ctx.fill();roundRect(ctx,side?2:4,-8,7,7,2);ctx.fill();
+    }
+
+    ctx.fillStyle=s.hat;ctx.beginPath();ctx.arc(0,-22,2,0,Math.PI*2);ctx.fill();
+    ctx.strokeStyle=s.coat;ctx.lineWidth=4.5;ctx.beginPath();ctx.moveTo(0,-24);ctx.lineTo(0,4);ctx.stroke();
+    ctx.strokeStyle=s.trim;ctx.lineWidth=5.5;ctx.beginPath();
+    ctx.moveTo(side?-10:-13,-18);ctx.lineTo((side?-14:-18)-arm,-2);
+    ctx.moveTo(side?10:13,-18);ctx.lineTo((side?14:18)+arm,-2);ctx.stroke();
+    ctx.fillStyle=s.skin;ctx.beginPath();ctx.arc((side?-14:-18)-arm,-2,3.2,0,Math.PI*2);ctx.arc((side?14:18)+arm,-2,3.2,0,Math.PI*2);ctx.fill();
+    if(type==="player"||type==="rival"||type==="digger"){ctx.fillStyle="#6e4e32";roundRect(ctx,side?-8:-10,-23,side?16:20,20,5);ctx.fill();}
+
+    ctx.fillStyle=s.skin;ctx.fillRect(-3,-31,6,5);ctx.beginPath();ctx.arc(0,-41,11.5,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle=s.hair;ctx.beginPath();ctx.arc(0,-45,11.5,Math.PI,0);ctx.fill();
+    ctx.fillStyle=s.hat;roundRect(ctx,-13,-52,26,8,4);ctx.fill();if(type!=="player"){ctx.fillRect(-8,-55,16,4);}else{ctx.fillRect(-7,-54,14,4);}
+    if(!back){
+      const eyeOffset=side?2.7:4.2;
+      ctx.fillStyle="#fff";ctx.beginPath();ctx.arc(-eyeOffset,-41,1.8,0,Math.PI*2);ctx.arc(eyeOffset,-41,1.8,0,Math.PI*2);ctx.fill();
+      ctx.fillStyle="#1a1a1a";ctx.beginPath();ctx.arc(-eyeOffset,-41,0.8,0,Math.PI*2);ctx.arc(eyeOffset,-41,0.8,0,Math.PI*2);ctx.fill();
+      ctx.strokeStyle="rgba(83,53,35,.75)";ctx.lineWidth=1.4;ctx.beginPath();ctx.moveTo(-4,-35);ctx.quadraticCurveTo(0,-32,4,-35);ctx.stroke();
+    }
+    if(type==="rival"||type==="digger"||type==="player"){ctx.strokeStyle="#8a623a";ctx.lineWidth=4;ctx.beginPath();ctx.moveTo(14,-18);ctx.lineTo(23,18);ctx.stroke();}
+    ctx.restore();
+  }
+
+  function drawPlayer(){
+    ctx.save();ctx.translate(player.x,player.y);const blink=player.invuln>0&&Math.floor(player.invuln*10)%2===0;ctx.globalAlpha=blink?.4:1;
+    if(world?.theme==="night"){const glow=ctx.createRadialGradient(0,-18,7,0,-18,70);glow.addColorStop(0,"rgba(210,255,228,.42)");glow.addColorStop(1,"rgba(210,255,228,0)");ctx.fillStyle=glow;ctx.beginPath();ctx.arc(0,-18,70,0,Math.PI*2);ctx.fill();}
+    ctx.scale(player.facing,1);
+    drawHeroVisual();
+    ctx.restore();
+  }
+
+  // A three-direction articulated character: the body changes pose instead of rotating like a vehicle.
+  function drawHeroVisual(){
+    const pose=player.pose||"front",back=pose==="back",side=pose==="side";
+    const phase=player.moving?player.step*1.08:player.animTime*1.8;
+    const stride=player.moving?Math.sin(phase)*player.speedRatio:Math.sin(phase)*.04;
+    const breathe=Math.sin(player.animTime*2.1),bob=player.moving?Math.abs(Math.cos(phase))*1.8*player.speedRatio:breathe*.45;
+    const leftLift=player.moving?Math.max(0,Math.cos(phase))*2.5*player.speedRatio:0;
+    const rightLift=player.moving?Math.max(0,-Math.cos(phase))*2.5*player.speedRatio:0;
+    ctx.fillStyle="rgba(0,0,0,.3)";ctx.beginPath();ctx.ellipse(0,18,24-player.speedRatio*2,9-player.speedRatio,0,0,Math.PI*2);ctx.fill();
+    ctx.save();ctx.translate(0,-bob);
+
+    // A compact field shovel and bedroll create a recognisable collector silhouette
+    // without adding a handheld detector to the character.
+    ctx.strokeStyle="#81603d";ctx.lineWidth=3.5;ctx.beginPath();ctx.moveTo(-16,-31);ctx.lineTo(-23,16);ctx.stroke();
+    ctx.fillStyle="#9da9a0";ctx.beginPath();ctx.moveTo(-28,14);ctx.lineTo(-18,14);ctx.lineTo(-20,24);ctx.lineTo(-27,22);ctx.closePath();ctx.fill();
+    if(!back){ctx.fillStyle="#244d40";roundRect(ctx,-21,-31,14,32,6);ctx.fill();ctx.fillStyle="#d0ad68";roundRect(ctx,-22,-32,16,7,3);ctx.fill();}
+
+    // Two-segment legs lift and plant independently, giving a real walking cadence.
+    const hipSpread=side?3:6,leftFootX=-hipSpread+stride*7,rightFootX=hipSpread-stride*7;
+    const leftKneeX=-hipSpread+stride*3,rightKneeX=hipSpread-stride*3;
+    ctx.lineCap="round";ctx.strokeStyle="#34484d";ctx.lineWidth=7;
+    ctx.beginPath();ctx.moveTo(-hipSpread,1);ctx.lineTo(leftKneeX,11-leftLift*.35);ctx.lineTo(leftFootX,22-leftLift);ctx.moveTo(hipSpread,1);ctx.lineTo(rightKneeX,11-rightLift*.35);ctx.lineTo(rightFootX,22-rightLift);ctx.stroke();
+    ctx.strokeStyle="#17252a";ctx.lineWidth=6;ctx.beginPath();ctx.moveTo(leftFootX-2,22-leftLift);ctx.lineTo(leftFootX+5,23-leftLift);ctx.moveTo(rightFootX-2,22-rightLift);ctx.lineTo(rightFootX+5,23-rightLift);ctx.stroke();
+    ctx.strokeStyle="#80a993";ctx.lineWidth=1.4;ctx.beginPath();ctx.moveTo(leftFootX-2,19-leftLift);ctx.lineTo(leftFootX+3,19-leftLift);ctx.moveTo(rightFootX-2,19-rightLift);ctx.lineTo(rightFootX+3,19-rightLift);ctx.stroke();
+
+    const jacket=ctx.createLinearGradient(-18,-24,18,4);jacket.addColorStop(0,"#4d9a78");jacket.addColorStop(.55,"#32745e");jacket.addColorStop(1,"#1f5749");
+    ctx.fillStyle=jacket;roundRect(ctx,side?-14:-18,-31+breathe*.25,side?28:36,37,11);ctx.fill();
+    ctx.strokeStyle="rgba(201,239,202,.3)";ctx.lineWidth=1.4;ctx.stroke();
+    ctx.fillStyle="#173f36";roundRect(ctx,side?-10:-14,-25,side?20:28,26,8);ctx.fill();
+
+    if(back){
+      ctx.fillStyle="#2a5a49";roundRect(ctx,-14,-27,28,28,7);ctx.fill();ctx.strokeStyle="#91b99a";ctx.lineWidth=1.5;ctx.stroke();
+      ctx.fillStyle="#3e7659";roundRect(ctx,-10,-13,20,11,4);ctx.fill();ctx.fillStyle="#d0ad68";roundRect(ctx,-15,-31,30,7,3);ctx.fill();
+      ctx.strokeStyle="#b8d5b9";ctx.beginPath();ctx.moveTo(-10,-25);ctx.lineTo(10,-4);ctx.moveTo(10,-25);ctx.lineTo(-10,-4);ctx.stroke();
+    }else{
+      ctx.fillStyle="#b9e5b8";roundRect(ctx,-3,-25,6,29,3);ctx.fill();
+      ctx.strokeStyle="#d8efcb";ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(-14,-25);ctx.lineTo(13,5);ctx.stroke();
+      ctx.fillStyle="#d9efca";roundRect(ctx,7,-10,8,9,2);ctx.fill();ctx.fillStyle="#1c4439";ctx.fillRect(10,-8,2,5);
+    }
+
+    // Tailored fieldwear details keep the enlarged silhouette readable at game zoom.
+    ctx.strokeStyle="rgba(221,244,213,.55)";ctx.lineWidth=1.2;ctx.beginPath();
+    ctx.moveTo(side?-9:-13,-23);ctx.lineTo(side?-9:-13,1);
+    if(!side){ctx.moveTo(13,-23);ctx.lineTo(13,2);}
+    ctx.stroke();
+    if(!back){
+      ctx.fillStyle="#d3e8bd";roundRect(ctx,side?5:-13,-8,side?7:9,8,2);ctx.fill();
+      ctx.fillStyle="#264f42";roundRect(ctx,side?7:-11,-6,side?3:5,4,1);ctx.fill();
+      ctx.fillStyle="#d8b65e";ctx.beginPath();ctx.arc(0,0,2.1,0,Math.PI*2);ctx.fill();
+      ctx.strokeStyle="#d0b66b";ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(-15,2);ctx.lineTo(15,2);ctx.stroke();
+      ctx.fillStyle="#f1d381";roundRect(ctx,-3,-1,6,5,1.5);ctx.fill();
+    }
+
+    const armSwing=stride*7;
+    ctx.strokeStyle="#43896d";ctx.lineWidth=6;
+    ctx.beginPath();ctx.moveTo(-13,-20);ctx.lineTo(-18-armSwing*.55,-10);ctx.lineTo(-20-armSwing,-1);ctx.moveTo(13,-20);ctx.lineTo(18+armSwing*.45,-11);ctx.lineTo(20+armSwing,-4);ctx.stroke();
+    ctx.fillStyle="#d6a17d";ctx.beginPath();ctx.arc(-20-armSwing,-1,3.6,0,Math.PI*2);ctx.arc(20+armSwing,-4,3.6,0,Math.PI*2);ctx.fill();
+
+    const scarfWave=Math.sin(player.animTime*3.2)*1.7+stride*3;
+    ctx.fillStyle="#e7bb5f";roundRect(ctx,side?-10:-13,-32,side?20:26,7,3);ctx.fill();
+    if(!back){ctx.beginPath();ctx.moveTo(7,-29);ctx.quadraticCurveTo(16+scarfWave,-23,12+scarfWave,-11);ctx.lineTo(7,-15);ctx.closePath();ctx.fill();}
+
+    ctx.fillStyle="#d6a17d";ctx.fillRect(-3,-36,6,7);ctx.beginPath();ctx.arc(0,-45,12.5,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle="#17372b";ctx.beginPath();ctx.arc(0,-49,12.5,Math.PI,0);ctx.fill();ctx.fillRect(-12,-48,5,9);ctx.fillRect(7,-48,5,9);
+    if(back){
+      ctx.fillStyle="#17372b";ctx.beginPath();ctx.arc(0,-44,11.5,0,Math.PI*2);ctx.fill();ctx.strokeStyle="#335b43";ctx.lineWidth=2;ctx.beginPath();ctx.arc(0,-44,7,.15,Math.PI-.15);ctx.stroke();
+    }else if(side){
+      const blinking=player.animTime%4.6>4.45;ctx.strokeStyle="#1b2822";ctx.lineWidth=blinking?1.8:0;ctx.fillStyle="#fff";ctx.beginPath();ctx.ellipse(5,-44,blinking?2.2:2.4,blinking?.35:1.8,0,0,Math.PI*2);ctx.fill();ctx.fillStyle="#17221d";ctx.beginPath();ctx.arc(5.7,-44,.8,0,Math.PI*2);ctx.fill();ctx.strokeStyle="#865a40";ctx.lineWidth=1.4;ctx.beginPath();ctx.moveTo(10,-42);ctx.lineTo(13,-40);ctx.lineTo(9,-39);ctx.stroke();
+    }else{
+      const blinking=player.animTime%4.6>4.45;ctx.fillStyle="#fff";ctx.beginPath();ctx.ellipse(-4.5,-44,2.1,blinking?.35:1.8,0,0,Math.PI*2);ctx.ellipse(4.5,-44,2.1,blinking?.35:1.8,0,0,Math.PI*2);ctx.fill();if(!blinking){ctx.fillStyle="#17221d";ctx.beginPath();ctx.arc(-4.5,-44,.85,0,Math.PI*2);ctx.arc(4.5,-44,.85,0,Math.PI*2);ctx.fill();}ctx.strokeStyle="#7b4f39";ctx.lineWidth=1.4;ctx.beginPath();ctx.moveTo(-4,-37);ctx.quadraticCurveTo(0,-34,4,-37);ctx.stroke();
+    }
+
+    // Small face and hat accents make the hero feel authored rather than icon-like.
+    if(!back){
+      ctx.strokeStyle="rgba(117,72,50,.65)";ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(-8,-40);ctx.lineTo(-6,-39);ctx.moveTo(6,-39);ctx.lineTo(8,-40);ctx.stroke();
+      ctx.fillStyle="#f1c7a0";ctx.beginPath();ctx.arc(-12,-43,1.8,0,Math.PI*2);ctx.arc(12,-43,1.8,0,Math.PI*2);ctx.fill();
+    }
+
+    ctx.fillStyle="#e7c374";ctx.beginPath();ctx.ellipse(0,-56,19,5.3,0,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle="#2e684e";roundRect(ctx,-12,-65,24,10,5);ctx.fill();ctx.fillStyle="#173f34";ctx.fillRect(-11,-58,22,3);
+    ctx.strokeStyle="rgba(230,255,236,.42)";ctx.lineWidth=1.2;ctx.beginPath();ctx.moveTo(-9,-63);ctx.lineTo(8,-63);ctx.stroke();
+    ctx.restore();
+    ctx.strokeStyle=world?.theme==="night"?"rgba(229,255,239,.7)":"rgba(255,255,255,.14)";ctx.lineWidth=2;ctx.beginPath();ctx.arc(0,-15,30,0,Math.PI*2);ctx.stroke();
+  }
+  function drawVisionCone(observer,vision,halfAngle=.57,active=false,boss=false){
+    if(!vision)return; ctx.save();ctx.translate(observer.x,observer.y);ctx.rotate(observer.angle); const gradient=ctx.createRadialGradient(0,0,8,0,0,vision);
+    if(active){gradient.addColorStop(0,boss?"rgba(255,242,173,.62)":"rgba(255,205,100,.46)");gradient.addColorStop(.72,"rgba(255,128,76,.12)");gradient.addColorStop(1,"rgba(255,72,61,.03)");}
+    else{gradient.addColorStop(0,boss?"rgba(255,236,157,.28)":"rgba(255,213,104,.14)");gradient.addColorStop(1,"rgba(255,213,104,0)");}
+    ctx.fillStyle=gradient;ctx.beginPath();ctx.moveTo(0,0);ctx.arc(0,0,vision,-halfAngle,halfAngle);ctx.closePath();ctx.fill(); ctx.strokeStyle=active?"rgba(255,93,76,.9)":boss?"rgba(255,232,151,.38)":"rgba(255,213,104,.22)";ctx.lineWidth=active?3:1.5;ctx.stroke();ctx.restore();
+  }
+  function drawRival(r){
+    if(r.flashlight&&r.stunTimer<=0)drawVisionCone(r,r.vision,r.halfAngle,r.seesPlayer,true);
+    if(r.trail)for(const t of r.trail){ctx.save();ctx.globalAlpha=clamp(t.life*1.3,0,.32);ctx.translate(t.x,t.y);ctx.scale(1.15,1.15);drawActor(0,0,"rival",r.angle,"",true,r);ctx.restore();}
+    ctx.save();ctx.translate(r.x,r.y);const pulse=1+Math.sin(renderNow()*.012)*.06;ctx.fillStyle=r.stunTimer>0?"rgba(102,235,158,.34)":r.name==="karel"?"rgba(242,203,114,.28)":"rgba(205,91,126,.26)";ctx.beginPath();ctx.arc(0,-18,(r.stunTimer>0?44:34)*pulse,0,Math.PI*2);ctx.fill();ctx.restore();
+    ctx.save();ctx.translate(r.x,r.y);const bob=r.dashTime>0?Math.sin(renderNow()*.05)*4:0;ctx.translate(0,bob);ctx.scale(r.stunTimer>0?1.16:1.28, r.stunTimer>0?1.1:1.28);drawActor(0,0,"rival",r.angle,"",true,r);ctx.restore();
+    if(r.stunTimer>0){ctx.save();ctx.translate(r.x,r.y-62);ctx.fillStyle="#9ff3bc";ctx.font="bold 22px sans-serif";ctx.textAlign="center";ctx.fillText("✦  ✦  ✦",0,0);ctx.restore();}
+    if(r.hitFlash>0){ctx.save();ctx.translate(r.x,r.y);ctx.strokeStyle=`rgba(255,138,114,${r.hitFlash*2.4})`;ctx.lineWidth=6;ctx.beginPath();ctx.arc(0,-8,31+r.hitFlash*14,0,Math.PI*2);ctx.stroke();ctx.restore();}
+    const label=r.displayName||(r.name==="karel"?"KAREL":"FRANTA");ctx.save();ctx.translate(r.x,r.y-92);const w=Math.max(164,label.length*8.7);ctx.fillStyle="rgba(25,12,12,.9)";roundRect(ctx,-w/2,-19,w,30,10);ctx.fill();ctx.strokeStyle=r.stunTimer>0?"#89efad":r.name==="karel"?"#f2cb72":"#ff7c8a";ctx.lineWidth=2.5;ctx.stroke();ctx.fillStyle=r.stunTimer>0?"#d9ffe6":r.name==="karel"?"#ffe8b4":"#ffd4dc";ctx.textAlign="center";ctx.font="bold 17px Inter, sans-serif";ctx.fillText(label,0,2);ctx.restore();
+  }
+
+  function drawPatrol(p){
+    if(p.vision)drawVisionCone(p,p.vision,p.halfAngle||.57,p.seesPlayer,false);
+    if(p.type==="tractor"){
+      const spin=p.wheelRotation||0,sc=p.scale||1.25,motion=p.motionRatio||0;
+      const visualAngle=Number.isFinite(p.visualAngle)?p.visualAngle:p.angle;
+      const suspension=motion>.02?Math.sin(p.motionPhase||0)*motion*1.15:0;
+      const pitch=motion>.02?Math.sin((p.motionPhase||0)*.47)*motion*.012:0;
+      const workOsc=p.working&&p.moving?Math.sin(p.workPhase||0)*1.8:0;
+      const variant=p.variant||0;
+      ctx.save();ctx.translate(p.x,p.y);ctx.rotate(visualAngle);ctx.scale(sc,sc);
+
+      // Ground contact stays fixed; only the sprung tractor body moves vertically.
+      ctx.save();ctx.translate(-39,29);ctx.strokeStyle="rgba(49,34,24,.3)";ctx.lineWidth=3.2;ctx.lineCap="round";
+      for(const y of [-10,10]){ctx.beginPath();ctx.moveTo(-34,y);ctx.lineTo(22,y);ctx.stroke();for(let x=-28;x<20;x+=12){ctx.beginPath();ctx.moveTo(x-4,y-3);ctx.lineTo(x+4,y+3);ctx.stroke();}}
+      ctx.restore();
+      ctx.fillStyle="rgba(0,0,0,.29)";ctx.beginPath();ctx.ellipse(-2,28,57,18,0,0,Math.PI*2);ctx.fill();
+
+      const wheel=(x,y,r,hub,phase)=>{
+        ctx.fillStyle="#171a18";ctx.beginPath();ctx.arc(x,y,r,0,Math.PI*2);ctx.fill();
+        ctx.strokeStyle="#40413b";ctx.lineWidth=3;ctx.beginPath();ctx.arc(x,y,r-3,0,Math.PI*2);ctx.stroke();
+        ctx.strokeStyle="rgba(183,173,144,.22)";ctx.lineWidth=1.4;
+        for(let n=0;n<10;n++){const a=phase+n*Math.PI/5;ctx.beginPath();ctx.arc(x,y,r-1,a,a+.19);ctx.stroke();}
+        ctx.fillStyle="#9b4c32";ctx.beginPath();ctx.arc(x,y,hub+3,0,Math.PI*2);ctx.fill();
+        ctx.fillStyle="#c18a63";ctx.beginPath();ctx.arc(x,y,hub,0,Math.PI*2);ctx.fill();
+        ctx.strokeStyle="rgba(36,35,31,.76)";ctx.lineWidth=2;
+        for(let n=0;n<6;n++){const a=phase+n*Math.PI/3;ctx.beginPath();ctx.moveTo(x+Math.cos(a)*hub,y+Math.sin(a)*hub);ctx.lineTo(x+Math.cos(a)*(r-5),y+Math.sin(a)*(r-5));ctx.stroke();}
+      };
+      wheel(-31,22,20,6,spin);wheel(29,23,14,5,-spin*(20/14));
+
+      // Rear three-point linkage and cultivator are visual only; collision geometry is unchanged.
+      if(p.working){
+        ctx.strokeStyle="#4a4035";ctx.lineWidth=4;ctx.lineCap="round";ctx.beginPath();ctx.moveTo(-45,7);ctx.lineTo(-61,13+workOsc*.25);ctx.moveTo(-43,13);ctx.lineTo(-61,13+workOsc*.25);ctx.stroke();
+        ctx.strokeStyle="#6a5948";ctx.lineWidth=5;ctx.beginPath();ctx.moveTo(-62,13+workOsc*.25);ctx.lineTo(-81,16+workOsc*.35);ctx.stroke();
+        ctx.strokeStyle="#403a32";ctx.lineWidth=2.5;for(const x of [-78,-70,-62]){ctx.beginPath();ctx.moveTo(x,15+workOsc*.35);ctx.lineTo(x-4,27);ctx.stroke();}
+        if(p.moving&&motion>.05){
+          const spray=.45+.55*Math.sin((p.workPhase||0)*1.35);
+          ctx.fillStyle=`rgba(174,126,77,${.1+spray*.11})`;
+          for(const x of [-88,-76,-64]){ctx.beginPath();ctx.ellipse(x,29+Math.sin((p.workPhase||0)+x)*1.5,2.2+spray*2,1.2,0,0,Math.PI*2);ctx.fill();}
+        }
+      }
+
+      ctx.save();ctx.translate(0,suspension);ctx.rotate(pitch);
+      ctx.fillStyle="#983c28";roundRect(ctx,-49,-19,79,34,8);ctx.fill();
+      const hood=ctx.createLinearGradient(-48,-16,17,8);hood.addColorStop(0,variant===1?"#b94d31":"#c45a35");hood.addColorStop(.55,"#a9442d");hood.addColorStop(1,"#7f3024");
+      ctx.fillStyle=hood;roundRect(ctx,-48,-17,variant===1?47:43,18,variant===1?7:5);ctx.fill();
+      ctx.strokeStyle="rgba(247,186,130,.35)";ctx.lineWidth=1.2;ctx.beginPath();ctx.moveTo(-42,-12);ctx.lineTo(-10,-12);ctx.stroke();
+      ctx.fillStyle="#6d2b22";for(let x=-40;x<-12;x+=7)ctx.fillRect(x,-6,4,2);
+      if(variant===1){ctx.strokeStyle="rgba(60,35,28,.58)";ctx.lineWidth=1.4;for(let y=-13;y<-2;y+=4){ctx.beginPath();ctx.moveTo(-45,y);ctx.lineTo(-39,y);ctx.stroke();}}
+
+      // Fenders and panel seams make the body read as metal volume, not a flat icon.
+      ctx.fillStyle="#7d3226";ctx.beginPath();ctx.arc(-31,20,24,Math.PI,Math.PI*2);ctx.lineTo(-7,20);ctx.lineTo(-55,20);ctx.closePath();ctx.fill();
+      ctx.fillStyle="#8d3828";ctx.beginPath();ctx.arc(29,22,17,Math.PI,Math.PI*2);ctx.lineTo(46,22);ctx.lineTo(12,22);ctx.closePath();ctx.fill();
+      ctx.strokeStyle="rgba(238,158,108,.25)";ctx.lineWidth=1;ctx.beginPath();ctx.moveTo(-46,-1);ctx.lineTo(18,-1);ctx.stroke();
+
+      ctx.fillStyle="#743124";roundRect(ctx,-12,-27,38,38,7);ctx.fill();
+      ctx.fillStyle="#263f48";roundRect(ctx,-8,-43,32,29,5);ctx.fill();
+      const glass=ctx.createLinearGradient(-7,-41,20,-18);glass.addColorStop(0,"rgba(224,241,239,.5)");glass.addColorStop(1,"rgba(93,132,141,.35)");
+      ctx.fillStyle=glass;roundRect(ctx,-5,-39,12,18,2);ctx.fill();roundRect(ctx,10,-39,10,18,2);ctx.fill();
+      ctx.strokeStyle="rgba(12,28,31,.7)";ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(8,-40);ctx.lineTo(8,-19);ctx.stroke();
+      ctx.fillStyle="rgba(232,214,178,.16)";ctx.fillRect(-4,-38,3,15);
+
+      ctx.fillStyle="#2a2b28";roundRect(ctx,24,-38,5,31,2);ctx.fill();
+      ctx.fillStyle="#343530";ctx.beginPath();ctx.ellipse(26,-40,5,2.4,0,0,Math.PI*2);ctx.fill();
+      if(p.moving&&motion>.04){
+        const smoke=.25+.75*(.5+.5*Math.sin((p.motionPhase||0)*.7));
+        ctx.fillStyle=`rgba(82,82,76,${.035+smoke*.075})`;ctx.beginPath();ctx.arc(29,-49-smoke*3.5,4+smoke*2,0,Math.PI*2);ctx.fill();
+      }
+
+      ctx.fillStyle="#ead595";ctx.beginPath();ctx.arc(34,-4,5.2,0,Math.PI*2);ctx.fill();
+      ctx.fillStyle="rgba(255,239,174,.18)";ctx.beginPath();ctx.arc(37,-4,12,0,Math.PI*2);ctx.fill();
+      ctx.strokeStyle="#6f2a20";ctx.lineWidth=3;ctx.beginPath();ctx.moveTo(-5,11);ctx.lineTo(20,11);ctx.stroke();
+      ctx.fillStyle="#d8c09a";roundRect(ctx,-1,-4,11,8,2);ctx.fill();
+
+      // Wear is geometry/material detail only; no random frame-to-frame noise.
+      ctx.strokeStyle="rgba(69,42,31,.3)";ctx.lineWidth=1.2;ctx.beginPath();ctx.moveTo(-38,6);ctx.lineTo(-20,4);ctx.moveTo(4,7);ctx.lineTo(17,5);ctx.stroke();
+      ctx.restore();
+      ctx.restore();return;
+    }
+    if(p.type==="car"){
+      const sc=(p.scale||1)*(p.visualScale||1);
+      const visualAngle=Number.isFinite(p.visualAngle)?p.visualAngle:p.angle;
+      const spin=p.wheelRotation||0,motion=p.motionRatio||0;
+      const steer=clamp(p.turnAmount||0,-1,1)*.36;
+      const suspension=motion>.02?Math.sin(p.motionPhase||0)*motion*.58:0;
+      const pitch=motion>.02?Math.sin((p.motionPhase||0)*.43)*motion*.009:0;
+      const variant=p.variant||0;
+      ctx.save();ctx.translate(p.x,p.y);ctx.rotate(visualAngle);ctx.scale(sc,sc);
+
+      // Contact shadow and tyres stay on the road; only the sprung body moves.
+      ctx.fillStyle="rgba(0,0,0,.27)";ctx.beginPath();ctx.ellipse(0,13,34,14,0,0,Math.PI*2);ctx.fill();
+      const wheel=(x,y,r,phase,steering=0)=>{
+        ctx.save();ctx.translate(x,y);ctx.rotate(steering);
+        ctx.fillStyle="#161b1d";ctx.beginPath();ctx.arc(0,0,r,0,Math.PI*2);ctx.fill();
+        ctx.strokeStyle="#45494a";ctx.lineWidth=1.5;ctx.beginPath();ctx.arc(0,0,r-1.5,0,Math.PI*2);ctx.stroke();
+        ctx.fillStyle="#8d8f8b";ctx.beginPath();ctx.arc(0,0,r*.46,0,Math.PI*2);ctx.fill();
+        ctx.strokeStyle="#313638";ctx.lineWidth=1.2;
+        for(let n=0;n<4;n++){const a=phase+n*Math.PI/2;ctx.beginPath();ctx.moveTo(Math.cos(a)*1.2,Math.sin(a)*1.2);ctx.lineTo(Math.cos(a)*(r-2),Math.sin(a)*(r-2));ctx.stroke();}
+        ctx.restore();
+      };
+      wheel(-20,-13,6,spin);wheel(-20,13,6,spin);
+      wheel(20,-13,6,spin,steer);wheel(20,13,6,spin,steer);
+
+      ctx.save();ctx.translate(0,suspension);ctx.rotate(pitch);
+      const body=ctx.createLinearGradient(-30,-13,30,15);
+      body.addColorStop(0,variant===1?"#7d4c46":"#9b5149");
+      body.addColorStop(.48,variant===1?"#a46758":"#a9574d");
+      body.addColorStop(1,variant===1?"#653b39":"#783c3b");
+      ctx.fillStyle=body;roundRect(ctx,-30,-15,60,30,10);ctx.fill();
+      ctx.strokeStyle="rgba(255,205,165,.2)";ctx.lineWidth=1.2;ctx.stroke();
+
+      // Bumpers and wheel arches give the silhouette physical depth.
+      ctx.fillStyle="#323738";roundRect(ctx,27,-10,4,20,2);ctx.fill();roundRect(ctx,-31,-10,4,20,2);ctx.fill();
+      ctx.strokeStyle="rgba(46,42,40,.55)";ctx.lineWidth=2;
+      for(const x of [-20,20]){ctx.beginPath();ctx.arc(x,-13,8,.12,Math.PI-.12);ctx.stroke();ctx.beginPath();ctx.arc(x,13,8,Math.PI+.12,Math.PI*2-.12);ctx.stroke();}
+
+      // Variant 0 reads as a sedan, variant 1 as a slightly longer estate/hatch.
+      const roofX=variant===1?-13:-7,roofW=variant===1?34:28;
+      ctx.fillStyle="#263c44";roundRect(ctx,roofX,-12,roofW,24,7);ctx.fill();
+      const glass=ctx.createLinearGradient(roofX,-11,roofX+roofW,11);
+      glass.addColorStop(0,"rgba(111,151,160,.5)");glass.addColorStop(.5,"rgba(194,220,219,.62)");glass.addColorStop(1,"rgba(80,113,122,.42)");
+      ctx.fillStyle=glass;
+      roundRect(ctx,roofX+3,-10,8,20,3);ctx.fill();
+      roundRect(ctx,roofX+roofW-11,-10,8,20,3);ctx.fill();
+      ctx.strokeStyle="rgba(17,34,39,.72)";ctx.lineWidth=1.5;ctx.beginPath();ctx.moveTo(roofX+roofW*.5,-11);ctx.lineTo(roofX+roofW*.5,11);ctx.stroke();
+
+      // Door seams, mirrors and deterministic wear distinguish materials without colour alone.
+      ctx.strokeStyle="rgba(54,38,37,.5)";ctx.lineWidth=1;
+      ctx.beginPath();ctx.moveTo(2,-14);ctx.lineTo(2,14);ctx.moveTo(-16,-13);ctx.lineTo(-16,13);ctx.stroke();
+      ctx.fillStyle="#252d30";roundRect(ctx,5,-18,5,4,2);ctx.fill();roundRect(ctx,5,14,5,4,2);ctx.fill();
+      ctx.strokeStyle="rgba(245,194,147,.24)";ctx.beginPath();ctx.moveTo(-25,-6);ctx.lineTo(-12,-8);ctx.moveTo(11,10);ctx.lineTo(22,8);ctx.stroke();
+
+      // White headlights, red tail lamps and a small plate establish front/back immediately.
+      ctx.fillStyle="#f3dda0";roundRect(ctx,26,-11,4,7,2);ctx.fill();roundRect(ctx,26,4,4,7,2);ctx.fill();
+      ctx.fillStyle="#e47762";roundRect(ctx,-30,-11,4,7,2);ctx.fill();roundRect(ctx,-30,4,4,7,2);ctx.fill();
+      ctx.fillStyle="#d5d9d2";roundRect(ctx,27,-3,3,6,1);ctx.fill();
+      if(Math.abs(p.turnAmount||0)>.12&&p.moving){
+        ctx.fillStyle="rgba(255,188,77,.78)";
+        const sy=(p.turnAmount||0)>0?8:-11;roundRect(ctx,25,sy,3,4,1);ctx.fill();
+      }
+      ctx.restore();
+      ctx.restore();return;
+    }
+    if(p.type==="bike"){
+      ctx.save();ctx.translate(p.x,p.y);ctx.rotate(p.angle);ctx.scale(p.scale||1,p.scale||1);
+      ctx.strokeStyle="#25383e";ctx.lineWidth=3.5;ctx.beginPath();ctx.arc(-11,9,9,0,Math.PI*2);ctx.arc(11,9,9,0,Math.PI*2);ctx.stroke();
+      ctx.strokeStyle="#607a83";ctx.beginPath();ctx.moveTo(-11,9);ctx.lineTo(0,-4);ctx.lineTo(11,9);ctx.moveTo(0,-4);ctx.lineTo(0,-15);ctx.stroke();
+      ctx.fillStyle="#d4a578";ctx.beginPath();ctx.arc(0,-11,7,0,Math.PI*2);ctx.fill();ctx.fillStyle="#263b3e";roundRect(ctx,-7,-18,14,4,2);ctx.fill();
+      ctx.restore();return;
+    }
+    drawActor(p.x,p.y,p.type,p.angle,p.type,false,p);
+  }
+
+  function drawItem(i){
+    ctx.save();ctx.translate(i.x,i.y);const bob=Math.sin(renderNow()*.005+i.x)*4;
+    if(i.type==="stone"||i.type==="sample"){
+      ctx.translate(0,bob*.45);
+      const isSample=i.type==="sample",pulse=.5+.5*Math.sin(renderNow()*.004+i.x*.013);
+      ctx.fillStyle="rgba(0,0,0,.2)";ctx.beginPath();ctx.ellipse(1,10,17,6,0,0,Math.PI*2);ctx.fill();
+      const aura=ctx.createRadialGradient(0,0,3,0,0,25);aura.addColorStop(0,isSample?"rgba(132,188,137,.18)":"rgba(114,180,133,.22)");aura.addColorStop(1,"rgba(74,142,97,0)");ctx.fillStyle=aura;ctx.beginPath();ctx.arc(0,0,25,0,Math.PI*2);ctx.fill();
+      const variant=i.visualVariant||0;
+      const samplePalettes=[["#b5c98e","#6f9568","#41644e"],["#c6b681","#8a8652","#4a5c3d"],["#9bb7a0","#5f8d78","#315646"],["#a8bf78","#688554","#344f3e"]];
+      const stonePalettes=[["#8fb56e","#4e8458","#316244"],["#b7a56e","#7c8150","#42583c"],["#7fb39b","#4a836a","#285844"],["#9aaa61","#5f7847","#304f39"]];
+      const palette=(isSample?samplePalettes:stonePalettes)[variant];
+      const gem=ctx.createLinearGradient(-10,-12,11,12);gem.addColorStop(0,palette[0]);gem.addColorStop(.28,palette[1]);gem.addColorStop(.68,palette[2]);gem.addColorStop(1,"#193c2f");
+      const shapeScale=[[1,.92],[.84,1.08],[1.12,.82],[.94,1.02]][variant],shapeAngle=[-.12,.08,.18,-.04][variant];
+      ctx.save();ctx.rotate(shapeAngle);ctx.scale(shapeScale[0],shapeScale[1]);
+      ctx.fillStyle=gem;gemPathVariant(variant,0,0,14);ctx.fill();
+      ctx.strokeStyle=isSample?"rgba(211,224,170,.7)":"rgba(189,222,170,.7)";ctx.lineWidth=1.4;gemPathVariant(variant,0,0,14);ctx.stroke();ctx.restore();
+      ctx.fillStyle=`rgba(235,248,206,${.28+pulse*.24})`;ctx.beginPath();ctx.moveTo(-5+variant,-9);ctx.lineTo(2,-11+variant*.5);ctx.lineTo(-1,-3);ctx.closePath();ctx.fill();
+      ctx.strokeStyle=`rgba(164,215,155,${.25+pulse*.25})`;ctx.lineWidth=1;ctx.beginPath();ctx.arc(0,0,19+pulse*3,0,Math.PI*2);ctx.stroke();
+    }else if(i.type==="clue"){
+      ctx.fillStyle="rgba(116,173,255,.18)";ctx.beginPath();ctx.arc(0,0,19,0,Math.PI*2);ctx.fill();ctx.fillStyle="#74adff";ctx.beginPath();ctx.arc(0,0,12,0,Math.PI*2);ctx.fill();ctx.strokeStyle="#d6e7ff";ctx.lineWidth=3;ctx.stroke();ctx.strokeStyle="rgba(255,255,255,.65)";ctx.lineWidth=1.5;ctx.beginPath();ctx.moveTo(-5,0);ctx.lineTo(5,0);ctx.moveTo(0,-5);ctx.lineTo(0,5);ctx.stroke();
+    }else if(i.type==="paper"){
+      ctx.fillStyle="rgba(0,0,0,.18)";ctx.beginPath();ctx.ellipse(2,20,17,5,0,0,Math.PI*2);ctx.fill();ctx.fillStyle="#e7dfbd";ctx.rotate(-.12);ctx.fillRect(-14,-18,28,36);ctx.strokeStyle="#607b8f";ctx.strokeRect(-14,-18,28,36);ctx.fillStyle="#d2c59f";ctx.beginPath();ctx.moveTo(4,-18);ctx.lineTo(14,-8);ctx.lineTo(14,-18);ctx.closePath();ctx.fill();ctx.fillStyle="#6f8798";ctx.fillRect(-8,-8,16,3);ctx.fillRect(-8,0,14,3);
+    }else if(i.type==="hole"){
+      ctx.rotate(i.angle||0);const w=i.w||82,h=i.h||44;
+      drawExcavationProfile(w,h,i.x+i.y,{lip:"#a97b4d",wall:"#704a31",deep:"#17120e",line:"#dab17b",material:"dark"},true);
+    }
+    ctx.restore();
+  }
+
+  function drawHotspot(h){
+    ctx.save();ctx.translate(h.x,h.y);const pulse=world.referenceScene?1:1+Math.sin(renderNow()*.006+h.x)*.08;ctx.scale(pulse,pulse);ctx.rotate(h.angle||0);
+    const permitted=world.id==="nesmen"&&h.needsFill&&!h.special;
+    ctx.strokeStyle=h.special?"#f2cb72":permitted?"rgba(166,190,132,.76)":"#72e5a1";
+    ctx.lineWidth=permitted?1.8:3;ctx.setLineDash(permitted?[4,5]:[7,6]);
+    if(h.needsFill||h.special==="hedgehog"){
+      const w=h.w||82,hh=h.h||44;
+      ctx.fillStyle=h.special?"rgba(242,203,114,.15)":permitted?"rgba(112,139,87,.07)":"rgba(114,229,161,.11)";organicPitPath(ctx,w+16,hh+13,h.x+h.y,.1);ctx.fill();ctx.stroke();ctx.setLineDash([]);
+      ctx.strokeStyle=h.special?"rgba(255,231,164,.72)":permitted?"rgba(185,204,153,.46)":"rgba(177,245,205,.72)";ctx.lineWidth=permitted?1.2:1.7;organicPitPath(ctx,w*.72,hh*.58,h.x-h.y,.08);ctx.stroke();
+      ctx.fillStyle=h.special?"rgba(255,222,132,.32)":permitted?"rgba(149,174,119,.15)":"rgba(151,228,177,.25)";for(let n=0;n<6;n++){const a=n/6*Math.PI*2+(h.x%19)*.03;ctx.beginPath();ctx.arc(Math.cos(a)*w*.42,Math.sin(a)*hh*.4,permitted?1.2:1.7+n%2,0,Math.PI*2);ctx.fill();}
+      if(world.id==="nesmen"&&!h.special){
+        // Four low wooden stakes and muted cord clarify that this is a small permitted profile, not an open pit.
+        const pts=[[-w*.48,-hh*.45],[w*.48,-hh*.45],[w*.48,hh*.45],[-w*.48,hh*.45]];
+        ctx.strokeStyle="rgba(189,171,126,.66)";ctx.lineWidth=1.2;ctx.beginPath();pts.forEach((q,i)=>{const n=pts[(i+1)%pts.length];ctx.moveTo(q[0],q[1]-4);ctx.lineTo(n[0],n[1]-4);});ctx.stroke();
+        ctx.fillStyle="#6b5136";for(const q of pts){roundRect(ctx,q[0]-2,q[1]-8,4,13,1);ctx.fill();}
+      }
+      if(h.special){ctx.fillStyle="#f4d37f";ctx.font="bold 15px sans-serif";ctx.textAlign="center";ctx.fillText("JEŽKOVÝ PROFIL",0,-hh/2-12);}
+    }else{
+      ctx.beginPath();ctx.arc(0,0,27,0,Math.PI*2);ctx.stroke();ctx.setLineDash([]);ctx.fillStyle=h.special?"rgba(242,203,114,.12)":"rgba(114,229,161,.1)";ctx.beginPath();ctx.arc(0,0,22,0,Math.PI*2);ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  function drawExit(e){ctx.save();ctx.translate(e.x,e.y);const pulse=1+Math.sin(renderNow()*.004)*.08;ctx.scale(pulse,pulse);ctx.fillStyle=goalComplete()?"rgba(99,228,155,.19)":"rgba(255,255,255,.05)";ctx.beginPath();ctx.arc(0,0,e.r,0,Math.PI*2);ctx.fill();ctx.strokeStyle=goalComplete()?"#63e49b":"rgba(255,255,255,.25)";ctx.lineWidth=4;ctx.stroke();ctx.fillStyle="#fff";ctx.font="bold 12px sans-serif";ctx.textAlign="center";ctx.fillText(e.label,0,4);ctx.restore();}
+  function drawEffects(){
+    if(scanPulse>0){
+      const radius=260+state.perks.scanner*55,fade=clamp(1-scanPulse,0,1),ang=player.angle-Math.PI+scanPulse*Math.PI*2;
+      ctx.save();ctx.translate(player.x,player.y);
+
+      // Full circular range rings establish the detector as a radar; the gameplay radius is unchanged.
+      ctx.setLineDash([5,8]);ctx.lineWidth=1.2;
+      for(const [ratio,alpha] of [[.34,.2],[.62,.16],[.9,.12]]){ctx.strokeStyle=`rgba(157,231,179,${fade*alpha})`;ctx.beginPath();ctx.arc(0,0,radius*ratio,0,Math.PI*2);ctx.stroke();}
+      ctx.setLineDash([]);
+
+      const center=ctx.createRadialGradient(0,0,2,0,0,34);center.addColorStop(0,`rgba(218,255,221,${fade*.42})`);center.addColorStop(1,"rgba(109,217,145,0)");ctx.fillStyle=center;ctx.beginPath();ctx.arc(0,0,34,0,Math.PI*2);ctx.fill();
+
+      ctx.save();ctx.rotate(ang);
+      const sweep=ctx.createRadialGradient(0,0,18,0,0,radius);sweep.addColorStop(0,`rgba(124,228,158,${fade*.08})`);sweep.addColorStop(.55,`rgba(105,219,145,${fade*.14})`);sweep.addColorStop(1,"rgba(87,197,126,0)");
+      ctx.fillStyle=sweep;ctx.beginPath();ctx.moveTo(0,0);ctx.arc(0,0,radius,-.42,.42);ctx.closePath();ctx.fill();
+      ctx.strokeStyle=`rgba(188,246,199,${fade*.72})`;ctx.lineWidth=2.4;ctx.beginPath();ctx.moveTo(0,0);ctx.lineTo(radius*.94,0);ctx.stroke();
+      ctx.strokeStyle=`rgba(143,234,169,${fade*.68})`;ctx.lineWidth=2;ctx.beginPath();ctx.arc(0,0,radius*.78,-.42,.42);ctx.stroke();
+      ctx.restore();
+
+      // Revealed targets briefly read as subdued radar blips, without exposing still-hidden items.
+      for(const item of world.items){if(!item.active||item.hidden||dist(player,item)>radius)continue;const dx=item.x-player.x,dy=item.y-player.y,r=6+Math.sin(renderNow()*.008+item.x)*1.5;ctx.strokeStyle=`rgba(207,246,190,${fade*.65})`;ctx.lineWidth=1.5;ctx.beginPath();ctx.arc(dx,dy,r,0,Math.PI*2);ctx.stroke();ctx.fillStyle=`rgba(117,202,133,${fade*.22})`;ctx.beginPath();ctx.arc(dx,dy,2.2,0,Math.PI*2);ctx.fill();}
+      ctx.restore();
+    }
+    // A short, localized ping makes the reveal readable without exposing hidden targets early.
+    for(const ping of world.radarPings||[]){const progress=1-ping.life/ping.maxLife,alpha=clamp(ping.life/ping.maxLife,0,1),radius=8+progress*34;ctx.save();ctx.translate(ping.x,ping.y);ctx.strokeStyle=ping.kind==="profile"?`rgba(242,203,114,${alpha*.78})`:`rgba(168,239,176,${alpha*.82})`;ctx.lineWidth=ping.kind==="profile"?2.4:1.8;ctx.beginPath();ctx.arc(0,0,radius,0,Math.PI*2);ctx.stroke();ctx.fillStyle=ping.kind==="profile"?`rgba(242,203,114,${alpha*.2})`:`rgba(129,225,151,${alpha*.24})`;ctx.beginPath();ctx.arc(0,0,4+progress*2,0,Math.PI*2);ctx.fill();ctx.restore();}
+    for(const h of world.hazards){ctx.fillStyle="#7b5635";ctx.beginPath();ctx.arc(h.x,h.y,h.r,0,Math.PI*2);ctx.fill();}for(const p of world.particles){ctx.globalAlpha=clamp(p.life*1.4,0,1);ctx.fillStyle=p.color;ctx.beginPath();ctx.arc(p.x,p.y,p.r,0,Math.PI*2);ctx.fill();ctx.globalAlpha=1;}if(world.theme==="night"){ctx.save();const g=ctx.createRadialGradient(player.x,player.y,72,player.x,player.y,430);g.addColorStop(0,"rgba(2,7,6,0)");g.addColorStop(.58,"rgba(2,7,6,.18)");g.addColorStop(1,"rgba(2,7,6,.68)");ctx.fillStyle=g;ctx.fillRect(camera.x,camera.y,viewport.w,viewport.h);ctx.restore();
+      for(const p of world.patrols)if(p.active&&p.vision)drawVisionCone(p,p.vision,p.halfAngle||.57,p.seesPlayer,false);
+      if(world.rival?.active&&world.rival.flashlight&&world.rival.stunTimer<=0)drawVisionCone(world.rival,world.rival.vision,world.rival.halfAngle,world.rival.seesPlayer,true);
+    }}
+
+  function drawScreenVignette(){
+    const g=ctx.createRadialGradient(
+      viewport.w/2,viewport.h/2,Math.min(viewport.w,viewport.h)*.25,
+      viewport.w/2,viewport.h/2,Math.max(viewport.w,viewport.h)*.72
+    );
+    g.addColorStop(0,"rgba(0,0,0,0)");
+    g.addColorStop(1,"rgba(0,0,0,.26)");
+    ctx.fillStyle=g;
+    ctx.fillRect(0,0,viewport.w,viewport.h);
+    if(world?.theme==="field"){
+      ctx.strokeStyle="rgba(190,225,229,.15)";
+      ctx.lineWidth=1;
+      const t=reducedMotion?0:renderNow()*.18;
+      for(let i=0;i<28;i++){
+        const x=(i*83+t)%(viewport.w+80)-40;
+        const y=(i*47+t*.7)%(viewport.h+60)-30;
+        ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(x-8,y+18);ctx.stroke();
+      }
+    }
+    if(flash>0&&!reducedMotion){
+      ctx.fillStyle=`rgba(${flashColor},${flash})`;
+      ctx.fillRect(0,0,viewport.w,viewport.h);
+    }
+    if(state.heat>65){
+      const beat=reducedMotion?.55:.55+.45*Math.sin(renderNow()*.012);
+      ctx.strokeStyle=`rgba(208,62,54,${(state.heat-65)/72*(.45+beat*.2)})`;
+      ctx.lineWidth=12+beat*8;
+      ctx.strokeRect(0,0,viewport.w,viewport.h);
+    }
+  }
+  function drawAtmosphereOverlay(){
+    if(!world)return;
+    const palette={
+      field:"126,104,78",meadow:"106,126,82",forest:"91,106,73",night:"30,48,43",city:"92,106,106"
+    };
+    const alpha=world.theme==="night"?.13:.045;
+    ctx.fillStyle=`rgba(${palette[world.theme]||palette.field},${alpha})`;
+    ctx.fillRect(0,0,viewport.w,viewport.h);
+    const glow={
+      field:{x:viewport.w*.18,y:viewport.h*.08,color:"255,224,164",strength:.16},
+      meadow:{x:viewport.w*.24,y:viewport.h*.12,color:"242,232,184",strength:.12},
+      forest:{x:viewport.w*.72,y:viewport.h*.1,color:"190,224,177",strength:.08},
+      night:{x:viewport.w*.82,y:viewport.h*.12,color:"174,215,226",strength:.16},
+      city:{x:viewport.w*.78,y:viewport.h*.18,color:"206,235,229",strength:.1}
+    }[world.theme]||null;
+    if(glow){
+      const radius=Math.max(viewport.w,viewport.h)*.82;
+      const light=ctx.createRadialGradient(glow.x,glow.y,0,glow.x,glow.y,radius);
+      light.addColorStop(0,`rgba(${glow.color},${glow.strength})`);
+      light.addColorStop(.36,`rgba(${glow.color},${glow.strength*.34})`);
+      light.addColorStop(1,"rgba(0,0,0,0)");
+      ctx.fillStyle=light;ctx.fillRect(0,0,viewport.w,viewport.h);
+    }
+    if(world.theme==="forest"||world.theme==="night"){
+      const moteTime=reducedMotion?0:renderNow()*.00036;
+      const core=world.theme==="night"?"221,246,158":"244,221,154";
+      const count=Math.max(8,Math.min(14,Math.round(viewport.w/92)));
+      for(let i=0;i<count;i++){
+        const x=(i*173+Math.sin(moteTime*(1+i%3)+i*1.7)*44+viewport.w)%viewport.w;
+        const y=(i*97+Math.cos(moteTime*(.72+i%2)+i)*28+viewport.h)%viewport.h;
+        const pulse=.35+.65*(.5+.5*Math.sin(moteTime*4+i*2.2));
+        ctx.fillStyle=`rgba(${core},${.035+pulse*.055})`;ctx.beginPath();ctx.arc(x,y,4+pulse*3,0,Math.PI*2);ctx.fill();
+        ctx.fillStyle=`rgba(${core},${.18+pulse*.26})`;ctx.beginPath();ctx.arc(x,y,1+pulse*.65,0,Math.PI*2);ctx.fill();
+      }
+    }
+    const edge=ctx.createRadialGradient(viewport.w/2,viewport.h/2,Math.min(viewport.w,viewport.h)*.18,viewport.w/2,viewport.h/2,Math.max(viewport.w,viewport.h)*.74);
+    edge.addColorStop(0,"rgba(0,0,0,0)"); edge.addColorStop(.72,"rgba(0,0,0,.06)"); edge.addColorStop(1,"rgba(0,0,0,.42)");
+    ctx.fillStyle=edge;ctx.fillRect(0,0,viewport.w,viewport.h);
+    ctx.globalAlpha=.035;
+    const tick=reducedMotion?0:Math.floor(renderNow()/80);
+    for(let i=0;i<54;i++){const x=(i*89+tick*17)%viewport.w,y=(i*47+tick*11)%viewport.h;ctx.fillStyle=i%2?"#fff":"#000";ctx.fillRect(x,y,1,1);}
+    ctx.globalAlpha=1;
+  }
+  function drawObjectiveArrow(){
+    if(!world||!world.exit)return;
+    let target=world.exit;
+    if(!goalComplete()){
+      const candidates=[];
+      for(const h of world.hotspots)if(h.active&&h.revealed)candidates.push(h);
+      for(const i of world.items)if(i.active&&!i.hidden)candidates.push(i);
+      if(!candidates.length)return;
+      target=candidates.sort((a,b)=>dist(player,a)-dist(player,b))[0];
+    }
+    const sx=target.x-camera.x,sy=target.y-camera.y;
+    if(sx>40&&sy>70&&sx<viewport.w-40&&sy<viewport.h-100)return;
+    const cx=viewport.w/2,cy=viewport.h/2;
+    const ang=Math.atan2(sy-cy,sx-cx),rad=Math.min(viewport.w,viewport.h)*.38;
+    ctx.save();
+    ctx.translate(cx+Math.cos(ang)*rad,cy+Math.sin(ang)*rad);
+    ctx.rotate(ang);
+    ctx.fillStyle=goalComplete()?"#63e49b":"#f2cb72";
+    ctx.beginPath();ctx.moveTo(15,0);ctx.lineTo(-10,-9);ctx.lineTo(-10,9);ctx.closePath();ctx.fill();
+    ctx.restore();
+  }
+
+  function roundRect(c,x,y,w,h,r){c.beginPath();c.roundRect(x,y,w,h,r);}
+  function organicPitPath(c,w,h,seed=0,roughness=.12){
+    const points=[];const count=14;
+    for(let n=0;n<count;n++){const angle=n/count*Math.PI*2;const wobble=1+Math.sin(seed*.017+n*2.37)*roughness+Math.cos(seed*.011+n*1.41)*roughness*.45;points.push({x:Math.cos(angle)*w*.5*wobble,y:Math.sin(angle)*h*.5*wobble});}
+    const first=points[0],last=points[points.length-1];c.beginPath();c.moveTo((last.x+first.x)/2,(last.y+first.y)/2);
+    for(let n=0;n<points.length;n++){const point=points[n],next=points[(n+1)%points.length];c.quadraticCurveTo(point.x,point.y,(point.x+next.x)/2,(point.y+next.y)/2);}c.closePath();
+  }
+  function drawExcavationProfile(w,h,seed,palette,showFill=false){
+    const ground=ctx.createRadialGradient(0,h*.08,w*.18,0,h*.08,w*.75);ground.addColorStop(0,"rgba(38,25,18,.22)");ground.addColorStop(.72,"rgba(77,55,37,.12)");ground.addColorStop(1,"rgba(77,55,37,0)");ctx.fillStyle=ground;ctx.beginPath();ctx.ellipse(0,h*.08,w*.72,h*.7,0,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle="rgba(0,0,0,.25)";ctx.beginPath();ctx.ellipse(4,h*.24,w*.59,h*.5,0,0,Math.PI*2);ctx.fill();
+
+    ctx.fillStyle=palette.lip;organicPitPath(ctx,w+28,h+21,seed,.17);ctx.fill();
+    ctx.strokeStyle="rgba(235,206,164,.11)";ctx.lineWidth=2;organicPitPath(ctx,w+21,h+15,seed+13,.14);ctx.stroke();
+
+    ctx.fillStyle=palette.wall;organicPitPath(ctx,w,h,seed+31,.12);ctx.fill();
+    ctx.strokeStyle=palette.line;ctx.lineWidth=2.2;organicPitPath(ctx,w*.9,h*.8,seed+67,.1);ctx.stroke();
+
+    // Layered wall bands read as a real soil profile rather than a flat icon.
+    ctx.save();organicPitPath(ctx,w*.83,h*.7,seed+79,.09);ctx.clip();
+    ctx.strokeStyle="rgba(233,202,155,.2)";ctx.lineWidth=2;
+    for(let n=-1;n<=1;n++){ctx.beginPath();ctx.moveTo(-w*.42,n*h*.12);ctx.quadraticCurveTo(0,n*h*.12+Math.sin(seed*.02+n)*4,w*.42,n*h*.1);ctx.stroke();}
+    ctx.restore();
+
+    ctx.fillStyle=palette.deep;organicPitPath(ctx,w*.68,h*.52,seed+103,.14);ctx.fill();
+    const depth=ctx.createRadialGradient(-w*.12,-h*.08,1,0,0,w*.36);depth.addColorStop(0,"rgba(255,236,191,.08)");depth.addColorStop(1,"rgba(0,0,0,.28)");ctx.fillStyle=depth;organicPitPath(ctx,w*.61,h*.44,seed+127,.1);ctx.fill();
+    ctx.strokeStyle="rgba(255,235,198,.14)";ctx.lineWidth=1.2;organicPitPath(ctx,w*.54,h*.36,seed+149,.08);ctx.stroke();
+
+    for(let n=0;n<12;n++){const angle=n/12*Math.PI*2+seed*.013,spread=.5+(n%3)*.05,x=Math.cos(angle)*w*spread,y=Math.sin(angle)*h*(.43+(n%2)*.04);ctx.fillStyle=n%3?palette.wall:palette.lip;ctx.beginPath();ctx.ellipse(x,y,2.5+n%4,1.6+n%3,angle,0,Math.PI*2);ctx.fill();}
+    const material=palette.material||"field";
+    if(material==="sand"){ctx.strokeStyle="rgba(247,226,177,.38)";ctx.lineWidth=1.2;for(let n=-2;n<=2;n++){ctx.beginPath();ctx.moveTo(-w*.36,n*h*.13);ctx.quadraticCurveTo(0,n*h*.13+2,w*.36,n*h*.11);ctx.stroke();}}
+    else if(material==="dark"){ctx.fillStyle="rgba(40,26,19,.34)";for(let n=0;n<5;n++){const x=-w*.34+n*w*.17;ctx.beginPath();ctx.ellipse(x,h*.2+(n%2)*4,5+(n%3)*2,2,0,0,Math.PI*2);ctx.fill();}}
+    else{ctx.strokeStyle="rgba(92,63,39,.4)";ctx.lineWidth=1.4;for(let n=-1;n<=1;n++){ctx.beginPath();ctx.moveTo(-w*.28+n*w*.2,-h*.24);ctx.quadraticCurveTo(-w*.1+n*w*.2,h*.02,w*.02+n*w*.2,h*.24);ctx.stroke();}}
+    const profileVariant=Math.abs(Math.floor(seed))%3;
+    if(profileVariant===0){ctx.strokeStyle="rgba(79,55,35,.42)";ctx.lineWidth=1.6;for(let n=0;n<4;n++){const x=-w*.34+n*w*.22;ctx.beginPath();ctx.moveTo(x,-h*.28);ctx.quadraticCurveTo(x+8,h*.02,x-3,h*.27);ctx.stroke();}}
+    else if(profileVariant===1){ctx.fillStyle="rgba(214,190,145,.42)";for(let n=0;n<7;n++){const a=n/7*Math.PI*2+.35;ctx.beginPath();ctx.ellipse(Math.cos(a)*w*.36,Math.sin(a)*h*.31,2+n%3,1.4+n%2,a,0,Math.PI*2);ctx.fill();}}
+    else{ctx.strokeStyle="rgba(241,216,164,.18)";ctx.lineWidth=2;for(let n=-1;n<=1;n++){ctx.beginPath();ctx.moveTo(-w*.34,n*h*.09);ctx.quadraticCurveTo(0,n*h*.09+3,w*.34,n*h*.06);ctx.stroke();}}
+    if(showFill){ctx.fillStyle=palette.line;ctx.font="bold 17px sans-serif";ctx.textAlign="center";ctx.fillText("↶",0,6);}
+  }
+  function ellipse(x,y,rx,ry){ctx.beginPath();ctx.ellipse(x,y,rx,ry,0,0,Math.PI*2);ctx.fill();}
+  function gemPath(x,y,r){gemPathVariant(0,x,y,r);}
+  function gemPathVariant(variant,x,y,r){
+    ctx.beginPath();
+    if(variant===1){ctx.moveTo(x,y-r*1.15);ctx.bezierCurveTo(x+r*.82,y-r*.45,x+r*.72,y+r*.48,x,y+r*1.08);ctx.bezierCurveTo(x-r*.7,y+r*.5,x-r*.55,y-r*.35,x,y-r*1.15);}
+    else if(variant===2){ctx.moveTo(x-r*.1,y-r*1.12);ctx.lineTo(x+r*.86,y-r*.25);ctx.lineTo(x+r*.38,y+r*1.02);ctx.lineTo(x-r*.62,y+r*.62);ctx.lineTo(x-r*.9,y-r*.3);}
+    else if(variant===3){ctx.moveTo(x-r*.2,y-r);ctx.quadraticCurveTo(x+r*.75,y-r*.88,x+r*.92,y-r*.1);ctx.quadraticCurveTo(x+r*.72,y+r*.78,x+r*.05,y+r*1.05);ctx.quadraticCurveTo(x-r*.8,y+r*.85,x-r*.86,y);ctx.quadraticCurveTo(x-r*.72,y-r*.72,x-r*.2,y-r);}
+    else{ctx.moveTo(x,y-r);ctx.lineTo(x+r*.8,y-r*.35);ctx.lineTo(x+r*.65,y+r*.7);ctx.lineTo(x,y+r);ctx.lineTo(x-r*.75,y+r*.35);ctx.lineTo(x-r*.8,y-r*.4);}
+    ctx.closePath();
+  }
+
+  function loop(now){const elapsed=(now-last)/1000||.016,dt=Math.min(.035,elapsed);last=now;update(dt,elapsed);render();requestAnimationFrame(loop);}
+
+  function setupControls(){
+    const zone=$("moveZone"),stick=$("stick"),action=$("actionButton");let pid=null,actionPid=null;const keys=new Set();
+    const syncKeyboard=()=>{input.x=(keys.has("KeyD")||keys.has("ArrowRight")?1:0)-(keys.has("KeyA")||keys.has("ArrowLeft")?1:0);input.y=(keys.has("KeyS")||keys.has("ArrowDown")?1:0)-(keys.has("KeyW")||keys.has("ArrowUp")?1:0);};
+    const cancelFillHold=()=>{if(mode==="dig"&&digKind==="fill"){digHolding=false;digMarker=.06;}};
+    resetControls=()=>{releasePointer(zone,pid);releasePointer(action,actionPid);pid=null;actionPid=null;keys.clear();input.x=input.y=0;input.pressed=false;stopPlayerMotion();stick.style.transform="translate(-50%,-50%)";action.classList.remove("active");cancelFillHold();resetDigPointer();};
+    const move=e=>{const r=zone.getBoundingClientRect(),dx=e.clientX-(r.left+r.width/2),dy=e.clientY-(r.top+r.height/2),max=r.width*.33,len=Math.hypot(dx,dy)||1,s=Math.min(1,max/len),x=dx*s,y=dy*s;input.x=x/max;input.y=y/max;stick.style.transform=`translate(calc(-50% + ${x}px),calc(-50% + ${y}px))`;};
+    zone.addEventListener("pointerdown",e=>{if(pid!==null)return;e.preventDefault();pid=e.pointerId;capturePointer(zone,pid);move(e);});
+    zone.addEventListener("pointermove",e=>{if(e.pointerId===pid)move(e);});
+    const endMove=e=>{if(e.pointerId!==pid)return;releasePointer(zone,pid);pid=null;input.x=input.y=0;stick.style.transform="translate(-50%,-50%)";};
+    zone.addEventListener("pointerup",endMove);zone.addEventListener("pointercancel",endMove);zone.addEventListener("lostpointercapture",e=>{if(e.pointerId===pid){pid=null;input.x=input.y=0;stick.style.transform="translate(-50%,-50%)";}});
+    action.addEventListener("pointerdown",e=>{if(actionPid!==null)return;e.preventDefault();actionPid=e.pointerId;capturePointer(action,actionPid);input.pressed=true;action.classList.add("active");haptic(8);performAction();});
+    const stopAction=e=>{if(e.pointerId!==actionPid)return;releasePointer(action,actionPid);actionPid=null;input.pressed=false;action.classList.remove("active");};
+    action.addEventListener("pointerup",stopAction);action.addEventListener("pointercancel",stopAction);action.addEventListener("lostpointercapture",e=>{if(e.pointerId===actionPid){actionPid=null;input.pressed=false;action.classList.remove("active");}});
+    addEventListener("keydown",e=>{
+      if(e.key==="Tab"&&modalScreens.has(activeScreen)){trapModalFocus(e);return;}
+      if(e.code==="Escape"&&!e.repeat){
+        if(activeScreen===screens.pause)resume();
+        else if(activeScreen===screens.how)closeAuxiliary(screens.how);
+        else if(activeScreen===screens.records)closeAuxiliary(screens.records);
+        else if(activeScreen===screens.dialog)closeDialog();
+        else if(mode==="playing"||mode==="dig")pause();
+        return;
+      }
+      if(mode!=="playing"&&mode!=="dig")return;
+      if(e.target instanceof HTMLButtonElement&&e.target.offsetParent!==null&&!["digButton","actionButton"].includes(e.target.id)&&!["KeyA","KeyD","KeyW","KeyS","ArrowLeft","ArrowRight","ArrowUp","ArrowDown"].includes(e.code))return;
+      if(["ArrowUp","ArrowDown","ArrowLeft","ArrowRight","Space"].includes(e.code))e.preventDefault();
+      if(e.code==="Space"&&!e.repeat){if(mode==="dig")digPress();else performAction();}
+      if(mode==="playing"&&["KeyA","KeyD","KeyW","KeyS","ArrowLeft","ArrowRight","ArrowUp","ArrowDown"].includes(e.code)){keys.add(e.code);syncKeyboard();}
+    });
+    addEventListener("keyup",e=>{if(e.code==="Space"&&mode==="dig"&&digKind==="fill"){e.preventDefault();digRelease();}keys.delete(e.code);syncKeyboard();});
+    addEventListener("blur",resetControls);
+    addEventListener("pagehide",resetControls);
+  }
+
+  function pause(){if(mode!=="playing"&&mode!=="dig")return;pausedMode=mode;if(mode==="dig"&&digKind==="fill"){digHolding=false;digMarker=.06;}mode="pause";audio.pauseAll();setPlaying(false);showOnly(screens.pause);}
+  function resume(){
+    if(mode!=="pause")return;
+    const returning=pausedMode;
+    mode=returning;
+    audio.resumeAll();
+    setPlaying(returning==="playing");
+    if(returning==="dig"){
+      const target=focusOrigins.get(screens.pause);
+      showOnly(screens.dig,{capture:false,focusTarget:target});
+    }else showOnly(null);
+    last=performance.now();
+  }
+  function toMenu(){save();currentDig=null;digHolding=false;digFinishDelay=0;mode="menu";world=null;setPlaying(false);showOnly(screens.title);refreshContinue();audio.setTheme("menu");audio.resumeAll();}
+  function showRecords(){const list=$("recordsList"),rows=getRecords();list.innerHTML="";if(!rows.length){list.innerHTML="<li><span>–</span><div>Zatím žádná dokončená výprava</div></li>";}else rows.forEach((r,i)=>{const li=document.createElement("li");li.innerHTML=`<b>${i+1}.</b><div><strong>${escapeHtml(r.title)}</strong><small>${r.stones} ${r.stones===1?"kámen":r.stones>=2&&r.stones<=4?"kameny":"kamenů"} · ${new Date(r.date).toLocaleDateString("cs-CZ")}</small></div><strong>${Number(r.score).toLocaleString("cs-CZ")}</strong>`;list.append(li);});openAuxiliary(screens.records);}
+
+  function bindUI(){
+    $("digPauseButton").addEventListener("click",pause);
+    $("playButton").addEventListener("click",startNew);$("continueButton").addEventListener("click",continueGame);$("briefButton").addEventListener("click",enterLevel);$("expertiseButton").addEventListener("click",finishExpertise);
+    const digButton=$("digButton");let digPointer=null;
+    resetDigPointer=()=>{const active=digPointer;digPointer=null;releasePointer(digButton,active);digButton.classList.remove("pressed");};
+    digButton.addEventListener("pointerdown",event=>{if(digPointer!==null)return;event.preventDefault();digPointer=event.pointerId;capturePointer(digButton,digPointer);digButton.classList.add("pressed");digPress();});
+    const releaseDigButton=event=>{if(event.pointerId!==digPointer)return;const active=digPointer;digPointer=null;releasePointer(digButton,active);digButton.classList.remove("pressed");if(event.type==="pointerup")digRelease();else if(digKind==="fill"){digHolding=false;digMarker=.06;}};
+    digButton.addEventListener("pointerup",releaseDigButton);digButton.addEventListener("pointercancel",releaseDigButton);digButton.addEventListener("lostpointercapture",event=>{if(event.pointerId===digPointer){digPointer=null;digButton.classList.remove("pressed");if(digKind==="fill"){digHolding=false;digMarker=.06;}}});
+    digButton.addEventListener("click",event=>{if(event.detail===0&&digKind==="dig")digAttempt();});$("realButton").addEventListener("click",()=>resolveSample(true));$("glassButton").addEventListener("click",()=>resolveSample(false));$("dialogButton").addEventListener("click",closeDialog);
+    $("fraudButton").addEventListener("click",()=>resolveFraudReview(true));$("fraudWrongButton").addEventListener("click",()=>resolveFraudReview(false));
+    $("juryButton").addEventListener("click",submitJury);$("againButton").addEventListener("click",()=>{state=freshState();world=null;mode="menu";audio.setTheme("menu");audio.resumeAll();showOnly(screens.title);refreshContinue();});
+    $("pauseButton").addEventListener("click",pause);$("resumeButton").addEventListener("click",resume);$("menuButton").addEventListener("click",toMenu);
+    $("soundButton").addEventListener("click",()=>{state.sound=audio.toggle();syncSoundButton();save();});
+    $("howButton").addEventListener("click",()=>openAuxiliary(screens.how));$("closeHowButton").addEventListener("click",()=>closeAuxiliary(screens.how));
+    $("recordsButton").addEventListener("click",showRecords);$("resultRecordsButton").addEventListener("click",showRecords);$("closeRecordsButton").addEventListener("click",()=>closeAuxiliary(screens.records));
+  }
+
+  function boot(){
+    resize();setupControls();bindUI();migrateLegacySave();refreshContinue();syncSoundButton();showOnly(screens.title,{capture:false,focus:false});
+    const params=new URLSearchParams(location.search);
+    if(params.has("new"))startNew();
+    else if(params.has("help"))openAuxiliary(screens.how);
+    if(params.has("debug")){
+      window.__lovecDebug={
+        startLevel(index=0){state=freshState();state.levelIndex=clamp(index,0,LEVELS.length-1);if(state.levelIndex===4)state.expertiseCompleted=true;generateLevel(state.levelIndex);mode="playing";showOnly(null);setPlaying(true);return {level:world.id,player:{x:player.x,y:player.y}};},
+        startScaleReference(){const result=generateScaleReference();mode="playing";showOnly(null);setPlaying(true);return result;},
+        startLoceniceReference(){const result=generateLoceniceReference();mode="playing";showOnly(null);setPlaying(true);return result;},
+        startNesmenReference(){const result=generateNesmenReference();mode="playing";showOnly(null);setPlaying(true);return result;},
+        startBesedniceReference(){const result=generateBesedniceReference();mode="playing";showOnly(null);setPlaying(true);return result;},
+        audioSnapshot(){return audio.snapshot();},
+        setAudioTheme(theme){audio.setTheme(theme);return audio.snapshot();},
+        spawnBoss(name="karel"){if(!world)return null;startRival(name,player.x+240,player.y-120);return world.rival;},
+        hitBoss(){hitRival();return world?.rival?{active:world.rival.active,hits:world.rival.hits,maxHits:world.rival.maxHits,phase:world.rival.phase}:null;},
+        setPlayer(x,y){player.x=x;player.y=y;return {x:player.x,y:player.y};},
+        setExcavatorState(index=0,options={}){
+          if(!world)return null;
+          const machines=world.props.filter(p=>p.type==="excavator");const p=machines[clamp(Math.round(index),0,Math.max(0,machines.length-1))];if(!p)return null;
+          if(Number.isFinite(options.x))p.x=options.x;if(Number.isFinite(options.y))p.y=options.y;
+          if(Number.isFinite(options.angle))p.angle=options.angle;
+          if(Number.isFinite(options.turretAngle))p.turretAngle=options.turretAngle;
+          if(Number.isFinite(options.turretTarget))p.turretTarget=options.turretTarget;
+          if(Number.isFinite(options.workPhase))p.workPhase=options.workPhase;
+          if(Number.isFinite(options.workSpeed))p.workSpeed=clamp(options.workSpeed,0,1);
+          if(typeof options.working==="boolean")p.working=options.working;
+          if(Number.isFinite(options.variant))p.variant=Math.max(0,Math.round(options.variant));
+          return {index:machines.indexOf(p),x:p.x,y:p.y,angle:p.angle||0,turretAngle:p.turretAngle||0,turretTarget:p.turretTarget||0,workPhase:p.workPhase||0,workSpeed:p.workSpeed||0,working:Boolean(p.working),variant:p.variant||0};
+        },
+        excavatorSnapshot(){return world?world.props.filter(p=>p.type==="excavator").map((p,index)=>({index,x:p.x,y:p.y,angle:p.angle||0,turretAngle:p.turretAngle||0,turretTarget:p.turretTarget||0,workPhase:p.workPhase||0,workSpeed:p.workSpeed||0,working:Boolean(p.working),variant:p.variant||0})):[];},
+        setPropState(type,index=0,options={}){
+          if(!world)return null;
+          const props=world.props.filter(p=>p.type===type);const p=props[clamp(Math.round(index),0,Math.max(0,props.length-1))];if(!p)return null;
+          if(Number.isFinite(options.x))p.x=options.x;if(Number.isFinite(options.y))p.y=options.y;
+          if(Number.isFinite(options.scale))p.scale=options.scale;
+          if(Number.isFinite(options.variant))p.variant=Math.max(0,Math.round(options.variant));
+          if(Number.isFinite(options.visualScale))p.visualScale=Math.max(.1,options.visualScale);return {type:p.type,index:props.indexOf(p),x:p.x,y:p.y,scale:p.scale||1,visualScale:p.visualScale||1,variant:p.variant||0};
+        },
+        setRenderTime(value=null){debugRenderTime=Number.isFinite(value)?value:null;return debugRenderTime;},
+
+        setScanCooldown(value=0){scanCooldown=Math.max(0,Number(value)||0);return scanCooldown;},
+        setScanPulse(value=.45){scanPulse=clamp(Number(value)||0,0,1);return scanPulse;},
+        setBossPose(x,y,angle=0){if(!world?.rival)return null;world.rival.x=x;world.rival.y=y;world.rival.angle=angle;world.rival.speed=0;world.rival.target={x,y};world.rival.moving=false;world.rival.motionRatio=0;return {x,y,angle};},
+        forceFrantaEscape(){const r=world?.rival;if(!r||r.name!=="franta"||!r.active)return null;const target=r.escapeTarget||{x:1650,y:980};r.x=target.x;r.y=target.y;r.graceTimer=0;updateRival(0);return {active:r.active,bossDefeated:Boolean(world.runtime.bossDefeated),dossierRecovered:Boolean(world.runtime.dossierRecovered),frantaEscaped:Boolean(world.runtime.frantaEscaped)};},
+        setHeat(value){state.heat=clamp(value,0,100);return state.heat;},
+        setBossStun(value=1){if(!world?.rival)return null;world.rival.stunTimer=value;return world.rival.stunTimer;},
+        rivalSnapshot(){const r=world?.rival;return r?{name:r.name,active:r.active,x:r.x,y:r.y,angle:r.angle,facing:r.facing,pose:r.pose,moving:Boolean(r.moving),motionRatio:r.motionRatio||0,motionPhase:r.motionPhase||0,distanceTravelled:r.distanceTravelled||0,stunTimer:r.stunTimer||0,dashTime:r.dashTime||0}:null;},
+        triggerTheft(){if(!world)return null;showTheftAlert();startRival("karel",player.x+180,player.y-100);return {shown:theftAlertShown,boss:world.rival?.name};},
+        startDigChallenge(index=2){state=freshState();state.levelIndex=clamp(index,0,LEVELS.length-1);generateLevel(state.levelIndex);mode="playing";showOnly(null);setPlaying(true);if(world.id==="nesmen")world.runtime.permit=true;const hotspot=world.hotspots.find(item=>item.active);if(!hotspot)return null;hotspot.revealed=true;startDig(hotspot);return {mode,level:world.id};},
+        startFillChallenge(index=2){state=freshState();state.levelIndex=clamp(index,0,LEVELS.length-1);generateLevel(state.levelIndex);mode="playing";showOnly(null);setPlaying(true);if(world.id==="nesmen")world.runtime.permit=true;const hole={type:"hole",x:player.x+80,y:player.y,r:46,w:74,h:42,angle:0,active:true};world.items.push(hole);world.runtime.open=(world.runtime.open||0)+1;startFill(hole);return {mode,level:world.id};},
+        setDigMarker(value=digZoneCenter){digMarker=clamp(value,0,1);return digMarker;},
+        setDigSpeed(value=0){digSpeed=Math.max(0,Number(value)||0);return digSpeed;},
+        setDigTime(value=4){digTimeLeft=clamp(value,0,7);return digTimeLeft;},
+        completeGoal(){
+          if(!world)return null;
+          const r=world.runtime;
+          if(world.id==="chlum"){
+            r.collected=6;
+            while(state.stones.length<6)state.stones.push(makeStone("Chlum",state.stones.length===5?"good":"common",true));
+          }else if(world.id==="locenice"){
+            r.correct=5;r.real=3;r.identified=Math.max(r.identified||0,5);
+          }else if(world.id==="nesmen"){
+            r.permit=true;r.dug=3;r.filled=3;r.open=0;
+          }else if(world.id==="besednice"){
+            r.clues=3;r.hedgehog=true;r.bossStarted=true;r.bossDefeated=true;
+            if(!state.stones.some(stone=>stone.rarity==="hedgehog"))state.stones.push(makeStone("Besednice","hedgehog",true,8));
+          }else if(world.id==="malse"){
+            r.certificateRecovered=true;r.registered=true;r.papers=3;r.fraudResolved=true;r.bossStarted=true;r.bossDefeated=true;r.dossierRecovered=true;r.frantaEscaped=false;state.stats.fraud=1;state.stats.dossier=1;
+          }
+          updateHUD(true);save();
+          return {level:world.id,complete:goalComplete(),stones:state.stones.length};
+        },
+        exitCurrentLevel(){if(!world)return null;tryExit();return {mode,levelIndex:state.levelIndex};},
+        triggerCaught(reason="Testovací dopadení"){if(!world)return null;player.invuln=0;caught(reason);return {caught:state.caught,stones:state.stones.length,player:{x:player.x,y:player.y}};},
+        digSnapshot(){return {mode,kind:digKind,holding:digHolding,hits:digHits,speed:digSpeed,timeLeft:digTimeLeft,zoneCenter:digZoneCenter,finishDelay:digFinishDelay,currentActive:Boolean(currentDig?.active),inputLocked:performance.now()<digInputLockUntil};},
+        fillSnapshot(){return world?{open:world.runtime.open||0,filled:world.runtime.filled||0}:null;},
+        malseSnapshot(){const r=world?.id==="malse"?world.runtime:null;const certificate=world?.id==="malse"?world.items.find(item=>item.type==="paper"&&item.special==="certificate"):null;return r?{certificateRecovered:Boolean(r.certificateRecovered),certificateStoneIds:[...(r.certificateStoneIds||[])],recoveredCertificateStoneIds:[...(r.recoveredCertificateStoneIds||[])],certificateItemStoneIds:[...(certificate?.stoneIds||[])],certificateItemCount:world.items.filter(item=>item.type==="paper"&&item.special==="certificate").length,arrivalFrantaCount:world.props.filter(prop=>prop.arrivalFranta).length,registered:Boolean(r.registered),papers:r.papers||0,fraudResolved:Boolean(r.fraudResolved),fraudAttempts:r.fraudAttempts||0,bossStarted:Boolean(r.bossStarted),bossDefeated:Boolean(r.bossDefeated),dossierRecovered:Boolean(r.dossierRecovered),frantaEscaped:Boolean(r.frantaEscaped),arrivalIncidentSeen:Boolean(r.arrivalIncidentSeen),arrivalIncidentActive:Boolean(r.arrivalIncidentActive)}:null;},
+        stoneSnapshot(){return state.stones.map(stone=>({id:stone.id,locality:stone.locality,rarity:stone.rarity,quality:stone.quality,documented:Boolean(stone.documented),certified:Boolean(stone.certified),value:stone.value}));},
+        setPatrolMotion(type="tractor",options={}){
+          if(!world)return null;
+          const p=world.patrols.find(item=>item.active&&item.type===type);if(!p)return null;
+          if(Number.isFinite(options.x))p.x=options.x;if(Number.isFinite(options.y))p.y=options.y;
+          if(Array.isArray(options.points)&&options.points.length){p.points=options.points.map(point=>({x:Number(point.x),y:Number(point.y)}));p.index=clamp(Number.isFinite(options.index)?Math.round(options.index):1,0,p.points.length-1);}
+          else if(Number.isFinite(options.index))p.index=clamp(Math.round(options.index),0,p.points.length-1);
+          if(Number.isFinite(options.speed))p.speed=Math.max(0,options.speed);
+          if(Number.isFinite(options.angle)){p.angle=options.angle;p.visualAngle=options.angle;}
+          if(typeof options.working==="boolean")p.working=options.working;
+          if(typeof options.collisionEnabled==="boolean")p.debugNoCollision=!options.collisionEnabled;
+          if(options.resetMotion){p.motionPhase=0;p.workPhase=0;p.wheelRotation=0;p.distanceTravelled=0;p.motionRatio=0;p.moving=false;p.turnAmount=0;}
+          return {type:p.type,x:p.x,y:p.y,speed:p.speed,index:p.index,working:p.working,angle:p.angle,visualAngle:p.visualAngle,wheelRotation:p.wheelRotation,distanceTravelled:p.distanceTravelled,collisionEnabled:!p.debugNoCollision};
+        },
+        snapCameraToPlayer(){camera.x=clamp(player.x-viewport.w/2,0,Math.max(0,world.w-viewport.w));camera.y=clamp(player.y-viewport.h/2,0,Math.max(0,world.h-viewport.h));return {x:camera.x,y:camera.y};},
+        patrolSnapshot(){return world?world.patrols.filter(p=>p.active).map(p=>({type:p.type,x:p.x,y:p.y,angle:p.angle,visualAngle:p.visualAngle,turnAmount:p.turnAmount,facing:p.facing,pose:p.pose,moving:p.moving,motionRatio:p.motionRatio,wheelRotation:p.wheelRotation,distanceTravelled:p.distanceTravelled,working:p.working})):[];},
+        snapshot(){return {version:APP_VERSION,mode,level:world?.id,heat:state.heat,dangerActive,theftAlertShown,input:{x:input.x,y:input.y,pressed:input.pressed},player:{x:player.x,y:player.y,angle:player.angle,facing:player.facing,pose:player.pose,vx:player.vx,vy:player.vy,speedRatio:player.speedRatio},terrainCache:{key:terrainCache.key,generated:terrainCache.generated,cached:Boolean(terrainCache.canvas),scale:terrainCache.scale},renderStats:{candidates:renderStats.candidates,rendered:renderStats.rendered,culled:renderStats.culled},world:world?{hotspots:world.hotspots.filter(h=>h.active).length,stones:world.items.filter(i=>i.active&&i.type==="stone").length,surfaceHidden:world.items.filter(i=>i.active&&i.hidden&&(i.type==="stone"||i.type==="sample")).length,surfaceVisible:world.items.filter(i=>i.active&&!i.hidden&&(i.type==="stone"||i.type==="sample")).length}:null,state:{levelIndex:state.levelIndex,stones:state.stones.length,certified:state.stones.filter(stone=>stone.certified).length,documented:state.stones.filter(stone=>stone.documented).length,score:state.score,pendingTransition:state.pendingTransition,expertiseCompleted:state.expertiseCompleted,caught:state.caught},boss:world?.rival?{name:world.rival.name,active:world.rival.active,hits:world.rival.hits,maxHits:world.rival.maxHits,phase:world.rival.phase,stunTimer:world.rival.stunTimer,dashTime:world.rival.dashTime,graceTimer:world.rival.graceTimer}:null};}
+      };
+    }
+    addEventListener("resize",()=>requestAnimationFrame(resize));
+    addEventListener("orientationchange",()=>{resetControls();setTimeout(resize,120);});
+    visualViewport?.addEventListener("resize",()=>requestAnimationFrame(resize));
+    document.addEventListener("visibilitychange",()=>{if(document.hidden){resetControls();if(mode==="playing"||mode==="dig")pause();else audio.pauseAll();}else{if(mode!=="pause")audio.resumeAll();if(activeScreen)requestAnimationFrame(()=>focusInitial(activeScreen));}});
+    if("serviceWorker" in navigator&&location.protocol.startsWith("http"))addEventListener("load",()=>navigator.serviceWorker.register("./sw.js").catch(()=>{}));
+    requestAnimationFrame(loop);
+  }
+  try{boot();}catch(error){console.error(error);$("playButton").disabled=true;$("playButton").innerHTML="<span>CHYBA SPUŠTĚNÍ</span><small>obnov stránku a zkus to znovu</small>";}
+})();
