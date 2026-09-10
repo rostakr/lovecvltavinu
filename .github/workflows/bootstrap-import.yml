@@ -1,0 +1,88 @@
+name: Bootstrap final Lovec vltavinu import
+
+on:
+  push:
+    branches: ["main"]
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: bootstrap-final-import
+  cancel-in-progress: false
+
+jobs:
+  import-build-deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Checkout destination repository
+        uses: actions/checkout@v7
+        with:
+          path: target
+          fetch-depth: 0
+
+      - name: Checkout verified final source
+        uses: actions/checkout@v7
+        with:
+          repository: rajekroman/Staraverze
+          ref: 7a30488424b81f58cf72c2a6eb9d3b3d69d22db9
+          path: source
+          persist-credentials: false
+
+      - name: Mirror verified source into destination main
+        shell: bash
+        run: |
+          set -euo pipefail
+          rsync -a --delete --exclude='.git/' source/ target/
+          cd target
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "Destination already matches source."
+          else
+            git commit -m "Import final game from rajekroman/Staraverze@7a304884"
+            git push origin HEAD:main
+          fi
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: source/package-lock.json
+
+      - name: Install dependencies
+        working-directory: source
+        run: npm ci
+
+      - name: Validate final source
+        working-directory: source
+        run: npm run validate
+
+      - name: Build publish artifact
+        working-directory: source
+        run: npm run build:publish
+
+      - name: Validate publish artifact
+        working-directory: source
+        run: npm run validate:publish
+
+      - name: Configure and enable GitHub Pages
+        uses: actions/configure-pages@v6
+        with:
+          enablement: true
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: source/dist
+
+      - name: Deploy GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5
