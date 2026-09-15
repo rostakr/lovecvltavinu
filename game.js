@@ -1670,7 +1670,7 @@
       if(r.dashTime>0){
         r.dashTime-=dt;
         r.x+=Math.cos(r.angle)*r.speed*2.25*dt;r.y+=Math.sin(r.angle)*r.speed*2.25*dt;
-        if(r.dashTime<=0){r.stunTimer=.9;r.target={x:rand(240,1560),y:rand(180,980)};toast("KAREL SE ZASTAVIL · TEĎ!","good",850);}
+        if(r.dashTime<=0){r.stunTimer=3;r.target={x:rand(240,1560),y:rand(180,980)};toast("KAREL SE ZASTAVIL · TEĎ!","good",3000);}
       }else if(r.stunTimer<=0){
         const dx=r.target.x-r.x,dy=r.target.y-r.y,d=Math.hypot(dx,dy)||1;
         const weave=r.phase>=2?Math.sin(performance.now()*.004+r.x)*18:0;
