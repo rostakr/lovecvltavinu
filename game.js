@@ -752,19 +752,21 @@
   }
 
   function generateNesmen(){
-    world.runtime={permit:false,dug:0,filled:0,open:0};player.x=360;player.y=1050;
-    addProp("npc",290,980,{name:"Lesník",avatar:"L",role:"owner"}); addProp("hut",120,1060,{scale:.9,visualScale:2.25});
-    for(let i=0;i<62;i++){const x=rand(30,1770),y=rand(30,1170);if(Math.hypot(x-900,y-650)>180)addProp("tree",x,y,{scale:rand(1.0,1.7)});}
-    for(let i=0;i<18;i++)addProp("pine",rand(40,1760),rand(40,1160),{scale:rand(.95,1.45)});
-    for(let i=0;i<24;i++)addProp("bush",rand(30,1770),rand(30,1170),{scale:rand(.6,1)});
-    for(let i=0;i<22;i++)addProp("fern",rand(80,1720),rand(90,1100),{scale:rand(.7,1.15)});
-    for(let i=0;i<30;i++)addProp("grass",rand(90,1710),rand(110,1110),{scale:rand(.7,1.25)});
-    for(let i=0;i<10;i++)addProp("stump",rand(160,1650),rand(180,1060),{scale:rand(.8,1.2)});
-    for(let i=0;i<6;i++)addProp("log",rand(220,1580),rand(210,990),{scale:rand(.8,1.2),angle:rand(-.6,.6)});
-    [[520,880],[930,860],[1290,740],[720,390]].forEach((p,i)=>addHotspot(p[0],p[1],{rarity:i===3?"good":"common",documented:true,needsFill:true,marked:true}));
-    addPatrol("ranger",[{x:420,y:560},{x:840,y:300},{x:1420,y:470},{x:1320,y:980},{x:650,y:1030}],{speed:82,vision:190});
-    world.exit={x:1650,y:150,r:54,label:"Lesní cesta"};
-  }
+  world.runtime={permit:false,dug:0,filled:0,open:0};player.x=360;player.y=1050;
+  const rangerSpawn={x:390,y:880};
+  const clearRangerArea=(x,y)=>Math.hypot(x-rangerSpawn.x,y-rangerSpawn.y)>185&&Math.hypot(x-player.x,y-player.y)>145;
+  addProp("npc",rangerSpawn.x,rangerSpawn.y,{name:"Lesník",avatar:"L",role:"owner",quest:true}); addProp("hut",120,1060,{scale:.9,visualScale:2.25});
+  for(let i=0;i<62;i++){const x=rand(30,1770),y=rand(30,1170);if(Math.hypot(x-900,y-650)>180&&clearRangerArea(x,y))addProp("tree",x,y,{scale:rand(1.0,1.7)});}
+  for(let i=0;i<18;i++){const x=rand(40,1760),y=rand(40,1160);if(clearRangerArea(x,y))addProp("pine",x,y,{scale:rand(.95,1.45)});}
+  for(let i=0;i<24;i++){const x=rand(30,1770),y=rand(30,1170);if(clearRangerArea(x,y))addProp("bush",x,y,{scale:rand(.6,1)});}
+  for(let i=0;i<22;i++){const x=rand(80,1720),y=rand(90,1100);if(clearRangerArea(x,y))addProp("fern",x,y,{scale:rand(.7,1.15)});}
+  for(let i=0;i<30;i++){const x=rand(90,1710),y=rand(110,1110);if(clearRangerArea(x,y))addProp("grass",x,y,{scale:rand(.7,1.25)});}
+  for(let i=0;i<10;i++){const x=rand(160,1650),y=rand(180,1060);if(clearRangerArea(x,y))addProp("stump",x,y,{scale:rand(.8,1.2)});}
+  for(let i=0;i<6;i++){const x=rand(220,1580),y=rand(210,990);if(clearRangerArea(x,y))addProp("log",x,y,{scale:rand(.8,1.2),angle:rand(-.6,.6)});}
+  [[520,880],[930,860],[1290,740],[720,390]].forEach((p,i)=>addHotspot(p[0],p[1],{rarity:i===3?"good":"common",documented:true,needsFill:true,marked:true}));
+  addPatrol("ranger",[{x:420,y:560},{x:840,y:300},{x:1420,y:470},{x:1320,y:980},{x:650,y:1030}],{speed:82,vision:190});
+  world.exit={x:1650,y:150,r:54,label:"Lesní cesta"};
+}
 
   function generateBesednice(){
     world.runtime={clues:0,hedgehog:false,bossStarted:false,bossHits:0,bossDefeated:false,chaseStarted:false};player.x=150;player.y=1030;
@@ -1749,7 +1751,7 @@
         nearest={kind,ref,x,y};
       }
     };
-    for(const p of world.props)if(p.type==="npc"&&!p.used)check("npc",p,p.x,p.y);
+    for(const p of world.props)if(p.type==="npc"&&!p.used)check("npc",p,p.x,p.y,p.quest&&!world.runtime.permit?96:68);
     for(const h of world.hotspots)if(h.active&&h.revealed)check("hotspot",h,h.x,h.y);
     for(const i of world.items)if(i.active&&!i.hidden)check(i.type==="hole"?"hole":"item",i,i.x,i.y,i.type==="hole"?98:68);
     if(world.rival?.active)check("rival",world.rival,world.rival.x,world.rival.y,world.rival.name==="franta"?140:world.rival.stunTimer>0?92:66);
@@ -2444,7 +2446,16 @@
     }
     else if(p.type==="plazatree"){ctx.fillStyle="rgba(0,0,0,.16)";ctx.beginPath();ctx.ellipse(0,15,24,8,0,0,Math.PI*2);ctx.fill();ctx.fillStyle="#6a5140";ctx.fillRect(-4,-32,8,50);ctx.fillStyle="#507044";for(const q of [[-12,-35,18],[12,-38,20],[0,-55,22]]){ctx.beginPath();ctx.arc(q[0],q[1],q[2],0,Math.PI*2);ctx.fill();}}
     else if(p.type==="plaza"){ctx.fillStyle="rgba(232,233,228,.5)";roundRect(ctx,-190,-70,380,140,16);ctx.fill();for(let i=-160;i<=160;i+=40){ctx.strokeStyle="rgba(110,115,112,.18)";ctx.beginPath();ctx.moveTo(i,-70);ctx.lineTo(i,70);ctx.stroke();}for(let i=0;i<8;i++){const x=-140+i*40;ctx.fillStyle=i%2?"#48535c":"#7a6a5d";ctx.beginPath();ctx.arc(x,5+(i%3)*10,5,0,Math.PI*2);ctx.fill();}}
-    else if(p.type==="npc")drawActor(0,0,p.role==="owner"?"ranger":"farmer",0,p.name,true,{pose:"front",facing:1,moving:false,motionRatio:0,motionPhase:0});
+    else if(p.type==="npc"){
+  drawActor(0,0,p.role==="owner"?"ranger":"farmer",0,p.name,true,{pose:"front",facing:1,moving:false,motionRatio:0,motionPhase:0});
+  if(p.quest&&world.id==="nesmen"&&!world.runtime.permit){
+    const pulse=1+Math.sin(renderNow()*.008)*.08;
+    ctx.save();ctx.translate(0,-72);ctx.scale(pulse,pulse);
+    ctx.fillStyle="rgba(242,203,114,.96)";ctx.beginPath();ctx.arc(0,0,13,0,Math.PI*2);ctx.fill();
+    ctx.fillStyle="#2f2a20";ctx.font="bold 17px sans-serif";ctx.textAlign="center";ctx.textBaseline="middle";ctx.fillText("!",0,1);
+    ctx.restore();
+  }
+}
     else if(p.type==="pit"){const r=p.r||28;drawExcavationProfile(r*2,r*1.1,p.x+p.y,{lip:"#a27a4f",wall:"#775035",deep:"#251b14",line:"#d0ad7d"});}
     else if(p.type==="bench"){
       ctx.fillStyle="rgba(0,0,0,.24)";ctx.beginPath();ctx.ellipse(0,15,43,10,0,0,Math.PI*2);ctx.fill();
