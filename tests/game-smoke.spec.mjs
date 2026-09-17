@@ -1140,7 +1140,7 @@ test("souhlas lesníka v Nesměni přežije reload před prvním kopáním", asy
   await page.evaluate(() => {
     localStorage.clear();
     window.__lovecDebug.startLevel(2);
-    window.__lovecDebug.setPlayer(290,980);
+    window.__lovecDebug.setPlayer(390,880);
   });
   await page.keyboard.press("Space");
   await expect(page.locator("#dialogScreen")).toHaveClass(/visible/);
@@ -1586,7 +1586,7 @@ test("Nesměň vyžaduje souhlas a projde třemi profily až k odchodu", async (
   await expect(page.locator("#toast")).toContainText("souhlas lesníka");
   await expect(page.locator("#objectiveLabel")).toHaveText("Získej souhlas lesníka");
 
-  await page.evaluate(() => window.__lovecDebug.setPlayer(300, 990));
+  await page.evaluate(() => window.__lovecDebug.setPlayer(390, 880));
   await expect(page.locator("#actionText")).toHaveText("MLUVIT");
   await page.keyboard.press("Space");
   await expect(page.locator("#dialogScreen")).toHaveClass(/visible/);
