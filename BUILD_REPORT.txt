@@ -12,7 +12,7 @@ AKTUÁLNÍ RELEASE GATE
 - motion evidence: car, tractor, excavator
 - game-smoke suite: 75 test definitions v aktuální release větvi
 - visual-regression suite: 24 test definitions / 26 test cases na každý viewport projekt; Expertiza má pevný fingerprint baseline
-- PWA cache revize: lovec-vltavinu-reborn-v5-4-2-runtime-36
+- PWA cache revize: lovec-vltavinu-reborn-v5-4-2-runtime-41
 - čistý Pages balík: explicitní allowlist, bez testů/nástrojů/vývojové dokumentace
 
 POKRYTÉ RELEASE SCÉNÁŘE
@@ -20,7 +20,7 @@ POKRYTÉ RELEASE SCÉNÁŘE
 - full journey: Chlum → Ločenice → Nesměň → Besednice → Expertiza → perk → Malše/Slávie → porota → výsledek
 - Chlum: radar → povrchové nálezy; Václav umí herně doložit jejich původ → odchod
 - Ločenice: identifikace vzorků, chybná volba a opakované odhalení radarem
-- Nesměň: souhlas lesníka → 3 profily → 3× zahrabat → odchod
+- Nesměň: viditelně označený Lesník ve volné zóně u startu, questový interakční dosah 96 → souhlas lesníka → 3 profily → 3× zahrabat → odchod
 - Besednice: theft alert → Karel → stun okna → 3 zásahy → návrat ježka → Expertiza konkrétních kamenů
 - Slávie: runtime střet s Frantou → ztracená certifikační složka svázaná s konkrétními stone IDs → ověřená registrace certifikovaných kusů → 3 indicie → kontrola podvodu → oddělený kontrolní dossier → Franta → výstavní sál → vitrína
 - Slávie: Franta lze zastavit reálným akčním tlačítkem v dotykově tolerantním dosahu
@@ -53,6 +53,7 @@ HISTORICKY OPRAVENÉ KRITICKÉ PROBLÉMY
 - okamžité osvětlení hráče Karlem
 - boss trail mimo sprint
 - Ločenice softlock po chybné identifikaci
+- obtížně dohledatelný povinný Lesník v Nesměni kvůli náhodné vegetaci a malému interakčnímu dosahu
 - reload softlock Karlova pendingBoss stavu
 - reload duplicita level completion bonusu
 - ztráta dopadení / ztraceného kamene po reloadu
